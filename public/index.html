@@ -515,12 +515,15 @@
   </div>
 
   <!-- ======================================================================= -->
-  <!-- MODAL 2: ACCOUNT DETAILS / EXPORT QR / EDIT / DELETE CONFIRM            -->
+  <!-- MODAL 2: CHỈNH SỬA TÀI KHOẢN (EDIT) & XUẤT MÃ QR CHUYỂN MÁY             -->
   <!-- ======================================================================= -->
   <div id="detail-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden my-auto">
       <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-        <h3 id="detail-modal-title" class="text-base font-bold text-white truncate">Chi tiết & Mã QR chuyển máy</h3>
+        <div>
+          <h3 id="detail-modal-title" class="text-base font-bold text-white truncate">Chỉnh sửa & Mã QR chuyển máy</h3>
+          <p class="text-xs text-slate-400">Đổi tên, chuyển nhóm Provider hoặc cập nhật Secret Key</p>
+        </div>
         <button onclick="closeDetailModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -528,36 +531,66 @@
         </button>
       </div>
 
-      <div class="p-5 space-y-4">
-        <!-- Generated QR Image for Scanning onto Another Phone -->
-        <div class="flex flex-col items-center bg-slate-950 border border-slate-800 rounded-2xl p-4">
-          <div id="export-qr-container" class="bg-white p-3 rounded-xl shadow-md"></div>
-          <p class="text-[11px] text-slate-400 mt-2.5 text-center">
-            Quét mã QR này bằng thiết bị khác để sao chép nhanh mã 2FA
-          </p>
-        </div>
-
+      <div class="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
         <!-- Editable Fields -->
         <div class="space-y-3">
           <input id="edit-id" type="hidden">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             <div>
-              <label for="edit-name" class="block text-xs text-slate-400 mb-1">Tên hiển thị</label>
-              <input id="edit-name" type="text" class="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-2 text-sm text-white focus:outline-none">
+              <label for="edit-name" class="block text-xs font-medium text-slate-300 mb-1">Tên tài khoản hiển thị</label>
+              <input id="edit-name" type="text" oninput="refreshEditModalQrPreview()"
+                     class="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-2 text-sm text-white focus:outline-none">
             </div>
             <div>
-              <label for="edit-provider" class="block text-xs text-slate-400 mb-1">Nhóm Provider</label>
-              <input id="edit-provider" type="text" class="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-2 text-sm text-white focus:outline-none">
+              <label for="edit-provider" class="block text-xs font-medium text-slate-300 mb-1">Nhóm Provider</label>
+              <input id="edit-provider" type="text" oninput="refreshEditModalQrPreview()"
+                     class="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-2 text-sm text-white focus:outline-none">
             </div>
           </div>
 
+          <!-- Quick Provider Chips inside Edit Modal -->
           <div>
-            <div class="flex items-center justify-between mb-1">
-              <label for="edit-uri" class="text-xs text-slate-400">Chuỗi chuẩn otpauth://</label>
-              <button onclick="copyEditUri()" class="text-[11px] text-blue-400 hover:text-blue-300 font-medium">Copy URI</button>
-            </div>
-            <input id="edit-uri" type="text" readonly class="w-full bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-400 focus:outline-none">
+            <div class="text-[11px] text-slate-400 mb-1">Chọn nhanh Provider đang có / phổ biến:</div>
+            <div id="edit-provider-chips" class="flex flex-wrap gap-1.5"></div>
           </div>
+
+          <!-- Safe Secret Key Field (Locked by default to prevent accidental corruption) -->
+          <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3 space-y-2">
+            <div class="flex items-center justify-between">
+              <label for="edit-secret" class="text-xs font-medium text-slate-300 flex items-center gap-1.5">
+                <span>Secret Key (Base32)</span>
+                <span id="secret-lock-badge" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">🔒 Đang khoá bảo vệ</span>
+              </label>
+              <button type="button" id="btn-unlock-secret" onclick="toggleUnlockEditSecret()"
+                      class="text-[11px] text-amber-400 hover:text-amber-300 font-medium">
+                🔓 Mở khoá sửa Secret
+              </button>
+            </div>
+            <input id="edit-secret" type="password" readonly oninput="refreshEditModalQrPreview()"
+                   class="w-full bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-300 focus:outline-none focus:border-amber-500">
+            <div class="flex items-center justify-between text-[11px] text-slate-400">
+              <span>Mã OTP kiểm tra:</span>
+              <span id="edit-live-otp-preview" class="font-mono font-bold text-emerald-400">--- ---</span>
+            </div>
+          </div>
+
+          <!-- Generated QR Image for Scanning onto Another Phone -->
+          <details id="edit-qr-details" class="bg-slate-950 border border-slate-800 rounded-2xl p-3.5" open>
+            <summary class="text-xs font-medium text-slate-300 cursor-pointer select-none flex items-center justify-between">
+              <span>📱 Mã QR chuyển sang điện thoại khác</span>
+              <span class="text-[11px] text-blue-400">Ẩn/Hiện</span>
+            </summary>
+            <div class="flex flex-col items-center pt-3">
+              <div id="export-qr-container" class="bg-white p-3 rounded-xl shadow-md"></div>
+              <div class="w-full mt-3">
+                <div class="flex items-center justify-between mb-1">
+                  <label for="edit-uri" class="text-[11px] text-slate-400">Chuỗi chuẩn otpauth://</label>
+                  <button type="button" onclick="copyEditUri()" class="text-[11px] text-blue-400 hover:text-blue-300 font-medium">Copy URI</button>
+                </div>
+                <input id="edit-uri" type="text" readonly class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-slate-400 focus:outline-none">
+              </div>
+            </div>
+          </details>
         </div>
 
         <!-- Action Footer -->
@@ -569,11 +602,40 @@
             <button onclick="closeDetailModal()" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-300">
               Huỷ
             </button>
-            <button onclick="saveEditedAccount()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition">
+            <button onclick="saveEditedAccount()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/20 transition">
               Lưu thay đổi
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- MODAL 5: XÁC NHẬN XOÁ TÀI KHOẢN AN TOÀN (DELETE CONFIRM MODAL)          -->
+  <!-- ======================================================================= -->
+  <div id="delete-confirm-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden p-5 space-y-4">
+      <div class="flex items-start gap-3">
+        <div class="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 flex items-center justify-center shrink-0">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-white">Xác nhận xoá mã TOTP?</h3>
+          <p class="text-xs text-slate-400 mt-1">
+            Bạn sắp xoá mã <strong id="delete-target-label" class="text-white"></strong> khỏi Cloudflare D1 trên toàn bộ thiết bị.
+          </p>
+        </div>
+      </div>
+      <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+        <button onclick="closeDeleteConfirmModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">
+          Huỷ bỏ
+        </button>
+        <button onclick="executeConfirmedDelete()" class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold shadow-lg shadow-red-600/20 transition">
+          🗑️ Xoá vĩnh viễn
+        </button>
       </div>
     </div>
   </div>
@@ -1375,6 +1437,7 @@
         if (remaining === 0) setTimeout(closeQuickProviderModal, 600);
       } else {
         closeQuickProviderModal();
+        closeDeleteConfirmModal();
       }
     }
 
@@ -1521,8 +1584,8 @@
                 </div>
               </div>
 
-              <!-- Pin / QR / Delete Controls -->
-              <div class="flex items-center gap-1 shrink-0">
+              <!-- Pin / Edit / QR / Delete Controls -->
+              <div class="flex items-center gap-0.5 sm:gap-1 shrink-0">
                 <button onclick="togglePinAccount(${acc.id})" title="${acc.pinned ? 'Bỏ ghim' : 'Ghim lên đầu'}"
                         class="p-1.5 rounded-lg transition ${
                           acc.pinned
@@ -1533,10 +1596,22 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
                   </svg>
                 </button>
-                <button onclick="openDetailModal(${acc.id})" title="Xem mã QR chuyển máy & Chỉnh sửa"
-                        class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+                <button onclick="openDetailModal(${acc.id}, 'edit')" title="Sửa tên, Provider hoặc Secret Key"
+                        class="p-1.5 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-slate-800 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                  </svg>
+                </button>
+                <button onclick="openDetailModal(${acc.id}, 'qr')" title="Xem mã QR chuyển thiết bị"
+                        class="p-1.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/>
+                  </svg>
+                </button>
+                <button onclick="openDeleteConfirmModal(${acc.id})" title="Xoá mã TOTP này"
+                        class="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-950/50 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                   </svg>
                 </button>
               </div>
@@ -1754,24 +1829,123 @@
       } catch (_) {}
     }
 
-    function openDetailModal(id) {
+    let pendingDeleteAccountId = null;
+    let isEditSecretUnlocked = false;
+
+    function openDetailModal(id, focusMode = 'edit') {
       const acc = accounts.find(a => Number(a.id) === Number(id));
       if (!acc) return;
 
       document.getElementById('edit-id').value = acc.id;
       document.getElementById('edit-name').value = acc.name;
       document.getElementById('edit-provider').value = acc.provider;
+      document.getElementById('edit-secret').value = acc.secret;
 
-      const label = encodeURIComponent(`${acc.provider}:${acc.name}`);
-      const issuer = encodeURIComponent(acc.provider);
-      const uri = `otpauth://totp/${label}?secret=${acc.secret}&issuer=${issuer}&digits=${acc.digits || 6}&period=${acc.period || 30}&algorithm=${(acc.algorithm || 'SHA-1').replace('-', '')}`;
+      // Mặc định khoá ô Secret để tránh sửa nhầm
+      isEditSecretUnlocked = false;
+      const secretInput = document.getElementById('edit-secret');
+      secretInput.readOnly = true;
+      secretInput.type = 'password';
+      document.getElementById('secret-lock-badge').innerText = '🔒 Đang khoá bảo vệ';
+      document.getElementById('btn-unlock-secret').innerText = '🔓 Mở khoá sửa Secret';
+
+      // Render chip chọn nhanh Provider trong modal Edit
+      renderEditProviderChips(acc.provider);
+
+      // Mở sẵn phần QR nếu bấm nút QR, hoặc focus vào ô tên nếu bấm nút Edit
+      const qrDetails = document.getElementById('edit-qr-details');
+      if (qrDetails) {
+        qrDetails.open = focusMode === 'qr';
+      }
+
+      refreshEditModalQrPreview();
+      document.getElementById('detail-modal').classList.remove('hidden');
+
+      if (focusMode === 'edit') {
+        setTimeout(() => document.getElementById('edit-name').focus(), 60);
+      }
+    }
+
+    function renderEditProviderChips(selectedProv) {
+      const container = document.getElementById('edit-provider-chips');
+      if (!container) return;
+      const options = Array.from(new Set([...getExistingUserProviders(), ...QUICK_PROVIDERS]));
+      container.innerHTML = options.map(p => {
+        const active = (selectedProv || '').toLowerCase() === p.toLowerCase();
+        const safeP = p.replace(/'/g, "\'");
+        return `
+          <button type="button" onclick="selectEditProviderChip('${safeP}')"
+                  class="text-[11px] px-2.5 py-1 rounded-lg border transition ${
+                    active
+                      ? 'bg-blue-600 text-white border-blue-500 font-semibold'
+                      : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                  }">
+            ${escapeHtml(p)}
+          </button>
+        `;
+      }).join('');
+    }
+
+    function selectEditProviderChip(prov) {
+      document.getElementById('edit-provider').value = prov;
+      renderEditProviderChips(prov);
+      refreshEditModalQrPreview();
+    }
+
+    function toggleUnlockEditSecret() {
+      isEditSecretUnlocked = !isEditSecretUnlocked;
+      const secretInput = document.getElementById('edit-secret');
+      const badge = document.getElementById('secret-lock-badge');
+      const btn = document.getElementById('btn-unlock-secret');
+
+      if (isEditSecretUnlocked) {
+        secretInput.readOnly = false;
+        secretInput.type = 'text';
+        secretInput.focus();
+        badge.innerText = '✏️ Đang cho phép sửa';
+        badge.className = 'text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300';
+        btn.innerText = '🔒 Khoá lại';
+      } else {
+        secretInput.readOnly = true;
+        secretInput.type = 'password';
+        badge.innerText = '🔒 Đang khoá bảo vệ';
+        badge.className = 'text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400';
+        btn.innerText = '🔓 Mở khoá sửa Secret';
+      }
+    }
+
+    async function refreshEditModalQrPreview() {
+      const id = Number(document.getElementById('edit-id').value);
+      const acc = accounts.find(a => Number(a.id) === id);
+      const name = document.getElementById('edit-name').value.trim() || 'Tài khoản';
+      const provider = document.getElementById('edit-provider').value.trim() || 'Khác';
+      const secret = document.getElementById('edit-secret').value.replace(/\s+/g, '').toUpperCase();
+
+      renderEditProviderChips(provider);
+
+      const livePreviewEl = document.getElementById('edit-live-otp-preview');
+      if (secret && base32ToBytes(secret).length > 0) {
+        const code = await generateTOTP(secret, {
+          digits: acc ? acc.digits : 6,
+          period: acc ? acc.period : 30,
+          algorithm: acc ? acc.algorithm : 'SHA-1'
+        });
+        livePreviewEl.innerText = formatOtpDisplay(code);
+        livePreviewEl.className = 'font-mono font-bold text-emerald-400';
+      } else {
+        livePreviewEl.innerText = 'Secret không hợp lệ';
+        livePreviewEl.className = 'font-mono font-bold text-red-400';
+      }
+
+      const label = encodeURIComponent(`${provider}:${name}`);
+      const issuer = encodeURIComponent(provider);
+      const uri = `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&digits=${acc ? acc.digits : 6}&period=${acc ? acc.period : 30}&algorithm=${((acc && acc.algorithm) || 'SHA-1').replace('-', '')}`;
       document.getElementById('edit-uri').value = uri;
 
-      // Vẽ mã QR chuẩn bằng qrcode-generator
       const qrContainer = document.getElementById('export-qr-container');
       qrContainer.innerHTML = '';
       try {
-        if (typeof qrcode === 'function') {
+        if (typeof qrcode === 'function' && secret) {
           const qr = qrcode(0, 'M');
           qr.addData(uri);
           qr.make();
@@ -1780,8 +1954,6 @@
       } catch (_) {
         qrContainer.innerHTML = '<div class="text-xs text-slate-600 p-4">Không thể tạo ảnh QR</div>';
       }
-
-      document.getElementById('detail-modal').classList.remove('hidden');
     }
 
     function closeDetailModal() {
@@ -1797,12 +1969,21 @@
       const id = Number(document.getElementById('edit-id').value);
       const newName = document.getElementById('edit-name').value.trim();
       const newProvider = document.getElementById('edit-provider').value.trim() || 'Khác';
+      const newSecret = document.getElementById('edit-secret').value.replace(/\s+/g, '').toUpperCase();
 
       const acc = accounts.find(a => Number(a.id) === id);
-      if (!acc || !newName) return;
+      if (!acc || !newName) {
+        showToast('Tên tài khoản không được để trống!', true);
+        return;
+      }
+      if (base32ToBytes(newSecret).length === 0) {
+        showToast('Secret Key chuẩn Base32 không hợp lệ!', true);
+        return;
+      }
 
       acc.name = newName;
       acc.provider = newProvider;
+      acc.secret = newSecret;
       const combinedName = newProvider !== 'Khác' ? `${newProvider} - ${newName}` : newName;
 
       saveLocalMetaForAccount(id, { provider: newProvider, pinned: acc.pinned });
@@ -1815,6 +1996,7 @@
           body: JSON.stringify({
             id,
             name: combinedName,
+            secret: newSecret,
             provider: newProvider,
             pinned: acc.pinned ? 1 : 0,
             digits: acc.digits,
@@ -1827,12 +2009,33 @@
       closeDetailModal();
       renderProviderTabs();
       renderTokens();
-      showToast('Đã cập nhật thông tin tài khoản!');
+      showToast('Đã lưu thay đổi tài khoản lên Cloud!');
     }
 
-    async function confirmDeleteCurrentAccount() {
+    function openDeleteConfirmModal(id) {
+      const acc = accounts.find(a => Number(a.id) === Number(id));
+      if (!acc) return;
+      pendingDeleteAccountId = Number(id);
+      document.getElementById('delete-target-label').innerText = `${acc.provider} • ${acc.name}`;
+      document.getElementById('delete-confirm-modal').classList.remove('hidden');
+    }
+
+    function closeDeleteConfirmModal() {
+      pendingDeleteAccountId = null;
+      document.getElementById('delete-confirm-modal').classList.add('hidden');
+    }
+
+    function confirmDeleteCurrentAccount() {
       const id = Number(document.getElementById('edit-id').value);
+      closeDetailModal();
+      openDeleteConfirmModal(id);
+    }
+
+    async function executeConfirmedDelete() {
+      if (pendingDeleteAccountId === null) return;
+      const id = pendingDeleteAccountId;
       const acc = accounts.find(a => Number(a.id) === id);
+      closeDeleteConfirmModal();
       if (!acc) return;
 
       accounts = accounts.filter(a => Number(a.id) !== id);
@@ -1843,10 +2046,9 @@
         await fetch(delUrl, { method: 'DELETE' });
       } catch (_) {}
 
-      closeDetailModal();
       renderProviderTabs();
       renderTokens();
-      showToast(`Đã xoá mã "${acc.name}"`);
+      showToast(`🗑️ Đã xoá mã "${acc.name}"`);
     }
 
     // =========================================================================
