@@ -1,0 +1,2511 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Cloud TOTP Pro — Cloudflare D1 Authenticator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace']
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background-color: #090d16;
+      background-image:
+        radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.12) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.08) 0px, transparent 50%);
+      background-attachment: fixed;
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    @keyframes scanline {
+      0% { top: 8%; opacity: 0.4; }
+      50% { top: 88%; opacity: 1; }
+      100% { top: 8%; opacity: 0.4; }
+    }
+    .scanner-laser {
+      position: absolute;
+      left: 8%;
+      right: 8%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #38bdf8, #3b82f6, #38bdf8, transparent);
+      box-shadow: 0 0 12px 2px rgba(56, 189, 248, 0.7);
+      animation: scanline 2.4s ease-in-out infinite;
+    }
+    .otp-blur {
+      filter: blur(7px);
+      transition: filter 0.2s ease;
+      user-select: none;
+    }
+    .group:hover .otp-blur,
+    .otp-blur:active {
+      filter: blur(0px);
+    }
+    .card-enter {
+      animation: cardFadeIn 0.2s ease-out;
+    }
+    @keyframes cardFadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body class="text-slate-100 min-h-screen pb-24 md:pb-12 selection:bg-blue-500/30 selection:text-blue-200">
+
+  <!-- Top Navigation & Header -->
+  <header class="sticky top-0 z-30 backdrop-blur-xl bg-slate-950/80 border-b border-slate-800/80">
+    <div class="max-w-4xl mx-auto px-4 py-3.5 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+          </svg>
+        </div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <h1 class="text-base md:text-lg font-bold tracking-tight text-white truncate">Cloud TOTP Pro</h1>
+            <span id="sync-badge" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span id="sync-badge-text">D1 Cloud</span>
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 truncate">Quét QR di động • Chia tab Provider • Đồng bộ D1</p>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="flex items-center gap-1.5 md:gap-2 shrink-0">
+        <!-- Global Countdown Pill -->
+        <div class="hidden sm:flex items-center gap-2 bg-slate-900/90 border border-slate-800 px-3 py-1.5 rounded-xl" title="Chu kỳ đổi mã 30 giây">
+          <div class="relative w-5 h-5 flex items-center justify-center">
+            <svg class="w-5 h-5 -rotate-90" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="9" fill="none" stroke="#1e293b" stroke-width="2.5"></circle>
+              <circle id="header-ring" cx="12" cy="12" r="9" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-dasharray="56.55" stroke-dashoffset="0" stroke-linecap="round" class="transition-all duration-700"></circle>
+            </svg>
+          </div>
+          <span id="countdown-text" class="font-mono text-xs font-bold text-blue-400 w-6 text-right">30s</span>
+        </div>
+
+        <!-- Privacy Blur Toggle -->
+        <button id="btn-privacy" onclick="togglePrivacyMode()" title="Ẩn/Hiện mã OTP (Chống nhìn trộm)"
+                class="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition">
+          <svg id="icon-eye-open" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+          </svg>
+          <svg id="icon-eye-closed" class="w-4 h-4 hidden text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
+          </svg>
+        </button>
+
+        <!-- Backup / Tools Modal Button -->
+        <button onclick="openToolsModal()" title="Sao lưu, Khôi phục & Mã Worker D1"
+                class="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+        </button>
+
+        <!-- Refresh D1 Button -->
+        <button id="btn-refresh" onclick="fetchAccounts(true)" title="Làm mới dữ liệu từ Cloud D1"
+                class="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition">
+          <svg id="icon-refresh" class="w-4 h-4 transition-transform duration-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+
+        <!-- Primary CTA: Scan QR -->
+        <button onclick="openAddModal('scan')"
+                class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-medium text-xs md:text-sm px-3 py-2 rounded-xl shadow-lg shadow-blue-600/25 transition">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 7V5a2 2 0 012-2h2m10 0h2a2 2 0 012 2v2m0 10v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M7 7h3v3H7V7zm7 0h3v3h-3V7zM7 14h3v3H7v-3zm7 3h3v-3h-3v3z"/>
+          </svg>
+          <span>Quét QR</span>
+        </button>
+
+        <!-- Manual Add Button -->
+        <button onclick="openAddModal('manual')"
+                class="hidden sm:flex items-center gap-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-medium text-xs md:text-sm px-3 py-2 rounded-xl transition">
+          <span>+ Nhập mã</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Thin Master Progress Bar -->
+    <div class="w-full bg-slate-900 h-1 overflow-hidden">
+      <div id="progress-bar" class="bg-gradient-to-r from-blue-500 to-cyan-400 h-full transition-all duration-1000" style="width: 100%"></div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="max-w-4xl mx-auto px-4 pt-5">
+
+    <!-- Quick Action Bar for Mobile + Search + Sort + Layout -->
+    <div class="flex flex-col md:flex-row gap-3 mb-4">
+      <!-- Search Input -->
+      <div class="relative flex-1">
+        <svg class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <input id="search-input" type="text" oninput="handleSearchChange(this.value)"
+               placeholder="Tìm theo tên tài khoản, email hoặc provider... (nhấn /)"
+               class="w-full bg-slate-900/90 border border-slate-800 focus:border-blue-500/80 rounded-xl pl-10 pr-20 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none transition">
+        <button id="btn-clear-search" onclick="clearSearch()"
+                class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white bg-slate-800 px-2 py-0.5 rounded-md">
+          Xoá
+        </button>
+      </div>
+
+      <!-- Sort & View Controls -->
+      <div class="flex items-center gap-2">
+        <!-- Sort Select -->
+        <div class="relative flex-1 md:flex-initial">
+          <select id="sort-select" onchange="handleSortChange(this.value)" aria-label="Sắp xếp tài khoản"
+                  class="w-full md:w-auto appearance-none bg-slate-900/90 border border-slate-800 hover:border-slate-700 rounded-xl pl-3.5 pr-9 py-2.5 text-xs md:text-sm text-slate-200 focus:outline-none focus:border-blue-500 cursor-pointer">
+            <option value="pinned_newest">⭐ Đã ghim & Mới nhất</option>
+            <option value="name_asc">🔤 Tên (A → Z)</option>
+            <option value="name_desc">🔤 Tên (Z → A)</option>
+            <option value="provider_asc">🏷️ Theo Provider (A → Z)</option>
+            <option value="most_used">🔥 Hay dùng nhất</option>
+          </select>
+          <svg class="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
+
+        <!-- Upload QR Image Quick Button -->
+        <button onclick="triggerQuickImageScan()" title="Quét nhanh từ ảnh QR trong máy"
+                class="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 px-3 py-2.5 rounded-xl text-xs md:text-sm font-medium transition shrink-0">
+          <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+          </svg>
+          <span class="hidden sm:inline">Ảnh QR</span>
+        </button>
+
+        <!-- Grid / List Layout Toggle -->
+        <button id="btn-layout" onclick="toggleLayoutMode()" title="Đổi kiểu hiển thị Lưới / Danh sách"
+                class="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition shrink-0">
+          <svg id="icon-grid" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
+          </svg>
+          <svg id="icon-list" class="w-4 h-4 hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Hidden Quick Image Input -->
+    <input id="quick-qr-file" type="file" accept="image/*" class="hidden" onchange="handleQuickImageFile(event)">
+
+    <!-- Provider Category Tabs -->
+    <div class="mb-4">
+      <div id="provider-tabs" class="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1.5">
+        <!-- Dynamically rendered Provider tabs -->
+      </div>
+    </div>
+
+    <!-- Banner gợi ý gán Provider cho dữ liệu D1 cũ chưa phân loại -->
+    <div id="legacy-d1-banner" class="hidden mb-4 px-4 py-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+      <div class="flex items-center gap-2.5 text-xs text-indigo-200">
+        <span class="w-7 h-7 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-300 shrink-0 font-bold">🏷️</span>
+        <div>
+          <span class="font-semibold text-white">Phát hiện <span id="legacy-count">0</span> mã từ D1 chưa gán Provider</span>
+          <span class="text-slate-400 block sm:inline sm:ml-1">— Bạn có thể bấm trực tiếp vào nhãn trên thẻ hoặc phân loại hàng loạt vào các Provider đang có.</span>
+        </div>
+      </div>
+      <button onclick="openQuickProviderModal(null)" class="shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow transition">
+        ⚡ Gán Provider nhanh
+      </button>
+    </div>
+
+    <!-- Expiring Soon Notice / Next Code Tip -->
+    <div id="expiring-banner" class="hidden mb-4 px-3.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+        <span>Mã hiện tại sắp đổi! Bạn có thể bấm vào <strong>Mã kế tiếp</strong> bên dưới mỗi thẻ để copy sớm.</span>
+      </div>
+      <span id="expiring-seconds" class="font-mono font-bold">5s</span>
+    </div>
+
+    <!-- Tokens Grid / List Container -->
+    <div id="tokens-list" class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+      <div class="col-span-full text-center text-slate-500 py-12 text-sm">Đang tải dữ liệu...</div>
+    </div>
+
+  </main>
+
+  <!-- Mobile Bottom Bar for Quick Scan & Manual Input -->
+  <div class="sm:hidden fixed bottom-0 inset-x-0 z-20 bg-slate-950/90 backdrop-blur-xl border-t border-slate-800/90 px-4 py-2.5 flex items-center justify-between gap-2">
+    <button onclick="openAddModal('scan')"
+            class="flex-1 flex items-center justify-center gap-2 bg-blue-600 active:bg-blue-700 text-white font-semibold text-xs py-2.5 rounded-xl shadow-lg shadow-blue-600/20">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 7V5a2 2 0 012-2h2m10 0h2a2 2 0 012 2v2m0 10v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2M7 7h3v3H7V7zm7 0h3v3h-3V7zM7 14h3v3H7v-3zm7 3h3v-3h-3v3z"/>
+      </svg>
+      <span>Camera QR</span>
+    </button>
+    <button onclick="triggerQuickImageScan()"
+            class="flex-1 flex items-center justify-center gap-1.5 bg-slate-800 active:bg-slate-700 text-slate-200 font-medium text-xs py-2.5 rounded-xl border border-slate-700">
+      <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+      </svg>
+      <span>Quét ảnh</span>
+    </button>
+    <button onclick="openAddModal('manual')"
+            class="flex-1 flex items-center justify-center gap-1.5 bg-slate-800 active:bg-slate-700 text-slate-200 font-medium text-xs py-2.5 rounded-xl border border-slate-700">
+      <span>+ Nhập tay</span>
+    </button>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- MODAL 1: ADD / SCAN QR / IMAGE SCAN / MANUAL INPUT                      -->
+  <!-- ======================================================================= -->
+  <div id="add-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden my-auto">
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+        <div>
+          <h2 class="text-base font-bold text-white">Thêm mã xác thực TOTP</h2>
+          <p class="text-xs text-slate-400">Tự động nhận diện Provider & tạo mã ngay khi quét</p>
+        </div>
+        <button onclick="closeAddModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Mode Switcher Tabs -->
+      <div class="grid grid-cols-3 gap-1 p-1.5 bg-slate-950/60 border-b border-slate-800 text-xs font-medium">
+        <button id="tab-btn-camera" onclick="switchAddTab('camera')"
+                class="py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition bg-blue-600 text-white shadow">
+          <span>📷 Camera</span>
+        </button>
+        <button id="tab-btn-image" onclick="switchAddTab('image')"
+                class="py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-white">
+          <span>🖼️ Quét từ Ảnh</span>
+        </button>
+        <button id="tab-btn-manual" onclick="switchAddTab('manual')"
+                class="py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-white">
+          <span>⌨️ Nhập thủ công</span>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4 max-h-[78vh] overflow-y-auto">
+        <!-- TAB 1: CAMERA QR SCANNER -->
+        <div id="panel-camera" class="space-y-3">
+          <div class="relative bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden aspect-square max-h-72 mx-auto flex items-center justify-center">
+            <video id="qr-video" playsinline autoplay muted class="w-full h-full object-cover hidden"></video>
+            <canvas id="qr-canvas" class="hidden"></canvas>
+
+            <!-- Scanner Viewfinder Overlay -->
+            <div id="scanner-overlay" class="hidden absolute inset-0 pointer-events-none">
+              <div class="scanner-laser"></div>
+              <div class="absolute inset-8 border-2 border-blue-400/40 rounded-2xl">
+                <div class="absolute -top-0.5 -left-0.5 w-6 h-6 border-t-4 border-l-4 border-blue-400 rounded-tl-lg"></div>
+                <div class="absolute -top-0.5 -right-0.5 w-6 h-6 border-t-4 border-r-4 border-blue-400 rounded-tr-lg"></div>
+                <div class="absolute -bottom-0.5 -left-0.5 w-6 h-6 border-b-4 border-l-4 border-blue-400 rounded-bl-lg"></div>
+                <div class="absolute -bottom-0.5 -right-0.5 w-6 h-6 border-b-4 border-r-4 border-blue-400 rounded-br-lg"></div>
+              </div>
+            </div>
+
+            <!-- Camera Placeholder / Status -->
+            <div id="camera-placeholder" class="text-center p-6 space-y-3">
+              <div class="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center mx-auto">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                </svg>
+              </div>
+              <p id="camera-status-text" class="text-xs text-slate-400 max-w-xs mx-auto">
+                Hướng camera điện thoại vào mã QR 2FA để tự động nhận diện Provider và sinh mã OTP.
+              </p>
+              <button onclick="startCameraScanner()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow transition">
+                Bật Camera ngay
+              </button>
+            </div>
+          </div>
+
+          <!-- Camera Controls -->
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <button id="btn-switch-cam" onclick="switchCameraFacing()"
+                      class="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition">
+                <span>🔄 Đổi Camera (Trước/Sau)</span>
+              </button>
+              <button id="btn-torch" onclick="toggleCameraTorch()"
+                      class="hidden text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 px-3 py-1.5 rounded-xl flex items-center gap-1 transition">
+                <span>🔦 Đèn Flash</span>
+              </button>
+            </div>
+            <button id="btn-stop-cam" onclick="stopCameraScanner()"
+                    class="text-xs text-slate-400 hover:text-red-400 px-2.5 py-1.5 rounded-lg transition">
+              Tắt Camera
+            </button>
+          </div>
+        </div>
+
+        <!-- TAB 2: SCAN FROM IMAGE / CLIPBOARD -->
+        <div id="panel-image" class="hidden space-y-3">
+          <div id="dropzone"
+               onclick="document.getElementById('modal-qr-file').click()"
+               ondragover="handleDragOver(event)"
+               ondragleave="handleDragLeave(event)"
+               ondrop="handleFileDrop(event)"
+               class="border-2 border-dashed border-slate-700 hover:border-blue-500/70 bg-slate-950/60 hover:bg-slate-950 rounded-2xl p-6 text-center cursor-pointer transition space-y-2.5">
+            <input id="modal-qr-file" type="file" accept="image/*" class="hidden" onchange="handleModalImageFile(event)">
+            <div class="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mx-auto">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+              </svg>
+            </div>
+            <div class="text-sm font-semibold text-white">Chọn ảnh QR, kéo thả hoặc nhấn Ctrl+V</div>
+            <p class="text-xs text-slate-400">Hỗ trợ ảnh chụp màn hình QR nền sáng & nền tối từ mọi dịch vụ</p>
+          </div>
+
+          <!-- Demo QR Generator to test image scanning right away -->
+          <div class="flex items-center justify-between bg-slate-950/70 border border-slate-800/80 rounded-xl px-3.5 py-2.5 text-xs">
+            <span class="text-slate-400">Chưa có sẵn ảnh QR trên máy?</span>
+            <button onclick="simulateSampleQRScan()" class="text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1">
+              <span>⚡ Quét thử QR mẫu</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- LIVE DETECTED QR PREVIEW CARD (Appears automatically when QR/Image is scanned!) -->
+        <div id="scanned-preview-box" class="hidden bg-gradient-to-br from-emerald-950/50 to-slate-900 border border-emerald-500/40 rounded-2xl p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-300">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              Đã nhận diện mã QR thành công!
+            </span>
+            <span id="scanned-provider-badge" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-800 text-white border border-slate-700">
+              GitHub
+            </span>
+          </div>
+
+          <div class="flex items-center justify-between bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+            <div>
+              <div id="scanned-account-name" class="text-xs text-slate-300 font-medium">GitHub (user@example.com)</div>
+              <div id="scanned-live-otp" onclick="copyScannedPreviewCode()"
+                   class="text-2xl font-mono font-bold text-emerald-400 tracking-wider cursor-pointer hover:text-emerald-300 mt-0.5">
+                --- ---
+              </div>
+            </div>
+            <button onclick="copyScannedPreviewCode()" class="text-xs bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 px-3 py-1.5 rounded-lg font-medium transition">
+              Copy ngay
+            </button>
+          </div>
+        </div>
+
+        <!-- TAB 3 / SHARED FORM: MANUAL OR EDITABLE DETAILS BEFORE SAVING -->
+        <div id="panel-manual" class="space-y-3.5 pt-1">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- Account Name -->
+            <div>
+              <label for="issuer" class="block text-xs font-medium text-slate-300 mb-1">Tên tài khoản / Email</label>
+              <input id="issuer" type="text" oninput="handleNameOrSecretInput()"
+                     placeholder="VD: dev@gmail.com"
+                     class="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none">
+            </div>
+
+            <!-- Provider Input + Auto-detect -->
+            <div>
+              <label for="provider-input" class="block text-xs font-medium text-slate-300 mb-1">
+                Provider (Tự động nhận biết)
+              </label>
+              <input id="provider-input" type="text" oninput="handleProviderManualInput(this.value)"
+                     placeholder="VD: GitHub, Google, AWS..."
+                     class="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none">
+            </div>
+          </div>
+
+          <!-- Quick Provider Chips -->
+          <div>
+            <div class="text-[11px] text-slate-400 mb-1.5">Chọn nhanh Provider:</div>
+            <div id="quick-provider-chips" class="flex flex-wrap gap-1.5">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+
+          <!-- Secret Key or otpauth:// URI -->
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label for="secret" class="text-xs font-medium text-slate-300">Secret Key (Base32) hoặc URI otpauth://</label>
+              <span id="manual-live-code" class="font-mono text-xs font-bold text-blue-400"></span>
+            </div>
+            <input id="secret" type="text" oninput="handleNameOrSecretInput()"
+                   placeholder="JBSWY3DPEHPK3PXP hoặc dán otpauth://totp/..."
+                   class="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3.5 py-2.5 text-sm font-mono text-white placeholder-slate-500 focus:outline-none">
+          </div>
+
+          <!-- Optional Advanced TOTP Settings -->
+          <details class="bg-slate-950/60 border border-slate-800/80 rounded-xl px-3.5 py-2">
+            <summary class="text-xs font-medium text-slate-400 hover:text-slate-200 cursor-pointer select-none">
+              Tuỳ chọn nâng cao (Digits, Chu kỳ, Thuật toán & Ghim)
+            </summary>
+            <div class="grid grid-cols-3 gap-2.5 pt-3 pb-1">
+              <div>
+                <label for="opt-digits" class="block text-[11px] text-slate-400 mb-1">Số ký tự</label>
+                <select id="opt-digits" onchange="handleNameOrSecretInput()" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white">
+                  <option value="6" selected>6 chữ số</option>
+                  <option value="8">8 chữ số</option>
+                </select>
+              </div>
+              <div>
+                <label for="opt-period" class="block text-[11px] text-slate-400 mb-1">Chu kỳ đổi</label>
+                <select id="opt-period" onchange="handleNameOrSecretInput()" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white">
+                  <option value="30" selected>30 giây</option>
+                  <option value="60">60 giây</option>
+                </select>
+              </div>
+              <div>
+                <label for="opt-algo" class="block text-[11px] text-slate-400 mb-1">Thuật toán</label>
+                <select id="opt-algo" onchange="handleNameOrSecretInput()" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white">
+                  <option value="SHA-1" selected>SHA-1</option>
+                  <option value="SHA-256">SHA-256</option>
+                  <option value="SHA-512">SHA-512</option>
+                </select>
+              </div>
+            </div>
+            <label class="flex items-center gap-2 text-xs text-slate-300 mt-2 cursor-pointer">
+              <input id="opt-pinned" type="checkbox" class="rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-0">
+              <span>⭐ Ghim tài khoản này lên đầu danh sách</span>
+            </label>
+          </details>
+
+          <!-- Auto-save toggle when scanning QR -->
+          <div class="flex items-center justify-between pt-1">
+            <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+              <input id="auto-save-qr" type="checkbox" onchange="toggleAutoSavePref(this.checked)" class="rounded border-slate-700 bg-slate-900 text-blue-600">
+              <span>Tự động lưu ngay khi quét trúng mã QR</span>
+            </label>
+          </div>
+
+          <!-- Submit Button -->
+          <div class="flex items-center justify-end gap-2 pt-2">
+            <button onclick="closeAddModal()" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">
+              Đóng
+            </button>
+            <button id="btn-add" onclick="addAccount()"
+                    class="flex-1 sm:flex-initial bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl px-5 py-2.5 text-xs md:text-sm shadow-lg shadow-blue-600/25 transition">
+              + Lưu tài khoản
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- MODAL 2: ACCOUNT DETAILS / EXPORT QR / EDIT / DELETE CONFIRM            -->
+  <!-- ======================================================================= -->
+  <div id="detail-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden my-auto">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+        <h3 id="detail-modal-title" class="text-base font-bold text-white truncate">Chi tiết & Mã QR chuyển máy</h3>
+        <button onclick="closeDetailModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4">
+        <!-- Generated QR Image for Scanning onto Another Phone -->
+        <div class="flex flex-col items-center bg-slate-950 border border-slate-800 rounded-2xl p-4">
+          <div id="export-qr-container" class="bg-white p-3 rounded-xl shadow-md"></div>
+          <p class="text-[11px] text-slate-400 mt-2.5 text-center">
+            Quét mã QR này bằng thiết bị khác để sao chép nhanh mã 2FA
+          </p>
+        </div>
+
+        <!-- Editable Fields -->
+        <div class="space-y-3">
+          <input id="edit-id" type="hidden">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div>
+              <label for="edit-name" class="block text-xs text-slate-400 mb-1">Tên hiển thị</label>
+              <input id="edit-name" type="text" class="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-2 text-sm text-white focus:outline-none">
+            </div>
+            <div>
+              <label for="edit-provider" class="block text-xs text-slate-400 mb-1">Nhóm Provider</label>
+              <input id="edit-provider" type="text" class="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3 py-2 text-sm text-white focus:outline-none">
+            </div>
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label for="edit-uri" class="text-xs text-slate-400">Chuỗi chuẩn otpauth://</label>
+              <button onclick="copyEditUri()" class="text-[11px] text-blue-400 hover:text-blue-300 font-medium">Copy URI</button>
+            </div>
+            <input id="edit-uri" type="text" readonly class="w-full bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-400 focus:outline-none">
+          </div>
+        </div>
+
+        <!-- Action Footer -->
+        <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-800">
+          <button onclick="confirmDeleteCurrentAccount()" class="px-3.5 py-2 rounded-xl bg-red-950/60 hover:bg-red-900/70 border border-red-800/50 text-red-300 text-xs font-medium transition">
+            🗑️ Xoá mã này
+          </button>
+          <div class="flex items-center gap-2">
+            <button onclick="closeDetailModal()" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-300">
+              Huỷ
+            </button>
+            <button onclick="saveEditedAccount()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition">
+              Lưu thay đổi
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- MODAL 3: BACKUP / IMPORT / CLOUDFLARE WORKER D1 SETUP                   -->
+  <!-- ======================================================================= -->
+  <div id="tools-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden my-auto">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+        <div>
+          <h3 class="text-base font-bold text-white">Sao lưu, Nhập hàng loạt & Cấu hình D1</h3>
+          <p class="text-xs text-slate-400">Quản lý dữ liệu TOTP cá nhân an toàn</p>
+        </div>
+        <button onclick="closeToolsModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4 max-h-[78vh] overflow-y-auto">
+        <!-- Export Section -->
+        <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-2.5">
+          <div class="text-xs font-semibold text-white">1. Sao lưu danh sách mã (Export Backup)</div>
+          <p class="text-xs text-slate-400">Xuất toàn bộ tài khoản ra file JSON hoặc danh sách URI <code class="text-blue-400">otpauth://</code> để cất giữ an toàn.</p>
+          <div class="flex flex-wrap gap-2 pt-1">
+            <button onclick="exportBackupJson()" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-white font-medium px-3.5 py-2 rounded-xl transition">
+              📥 Tải file Backup (.json)
+            </button>
+            <button onclick="copyAllOtpAuthUris()" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-cyan-300 font-medium px-3.5 py-2 rounded-xl transition">
+              📋 Copy toàn bộ list otpauth://
+            </button>
+          </div>
+        </div>
+
+        <!-- Batch Import Section -->
+        <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-2.5">
+          <div class="text-xs font-semibold text-white">2. Nhập hàng loạt (Batch Import)</div>
+          <p class="text-xs text-slate-400">Dán nhiều dòng <code class="text-blue-400">otpauth://totp/...</code> (mỗi dòng 1 mã) hoặc nội dung file JSON backup vào bên dưới:</p>
+          <textarea id="batch-import-text" rows="4"
+                    placeholder="otpauth://totp/GitHub:user?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&#10;otpauth://totp/Google:mail@gmail.com?secret=HXDMVJECJJWSRB3H&issuer=Google"
+                    class="w-full bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-xl p-3 text-xs font-mono text-white placeholder-slate-600 focus:outline-none"></textarea>
+          <div class="flex justify-end">
+            <button onclick="importBatchAccounts()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition">
+              ⚡ Nhập & Tự động chia Provider
+            </button>
+          </div>
+        </div>
+
+        <!-- D1 SQL Info -->
+        <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-white">3. Tương thích Cloudflare D1</span>
+            <span class="text-[11px] text-emerald-400 font-medium">Auto-Migration Bật</span>
+          </div>
+          <p class="text-xs text-slate-400">
+            File <code class="text-amber-300">worker.js</code> đi kèm đã tích hợp tự động nâng cấp bảng <code class="text-slate-200">accounts</code> trên D1 (thêm cột <code class="text-slate-200">provider</code>, <code class="text-slate-200">pinned</code>, <code class="text-slate-200">digits</code>, <code class="text-slate-200">period</code>) và tương thích ngược hoàn toàn với dữ liệu cũ của bạn.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================================= -->
+  <!-- MODAL 4: GÁN NHANH PROVIDER CHO DỮ LIỆU D1 CŨ (1-CLICK ASSIGN & BULK)   -->
+  <!-- ======================================================================= -->
+  <div id="provider-assign-modal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden my-auto">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+        <div>
+          <h3 id="provider-modal-title" class="text-base font-bold text-white">Gán tài khoản vào Provider</h3>
+          <p id="provider-modal-subtitle" class="text-xs text-slate-400">Chọn 1 chạm vào các Provider đang có hoặc tạo mới</p>
+        </div>
+        <button onclick="closeQuickProviderModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Chế độ 1: Gán cho 1 tài khoản cụ thể khi bấm từ thẻ -->
+      <div id="single-assign-panel" class="p-5 space-y-4">
+        <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+          <div>
+            <div class="text-[11px] text-slate-400">Tài khoản đang chọn:</div>
+            <div id="assign-target-name" class="text-sm font-bold text-white mt-0.5"></div>
+          </div>
+          <span id="assign-target-current" class="text-xs px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 font-medium"></span>
+        </div>
+
+        <!-- Các Provider đang có sẵn trong danh sách của người dùng -->
+        <div id="existing-providers-section" class="space-y-2">
+          <div class="text-xs font-semibold text-blue-400">Các Provider đang có của bạn (1 chạm để gán):</div>
+          <div id="existing-provider-buttons" class="flex flex-wrap gap-2"></div>
+        </div>
+
+        <!-- Các Provider phổ biến gợi ý -->
+        <div class="space-y-2">
+          <div class="text-xs font-semibold text-slate-300">Hoặc chọn nhanh Provider phổ biến:</div>
+          <div id="preset-provider-buttons" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
+        </div>
+
+        <!-- Tự nhập tên Provider mới -->
+        <div class="pt-2 border-t border-slate-800">
+          <label for="custom-assign-provider" class="block text-xs text-slate-400 mb-1.5">Hoặc tự đặt tên Provider mới:</label>
+          <div class="flex gap-2">
+            <input id="custom-assign-provider" type="text" placeholder="VD: Công việc, Ngân hàng, VPS..."
+                   class="flex-1 bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none">
+            <button onclick="applyCustomProviderSingle()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition">
+              Lưu
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chế độ 2: Phân loại hàng loạt các tài khoản D1 cũ đang ở mục 'Khác' -->
+      <div id="bulk-assign-panel" class="hidden p-5 space-y-3 max-h-[72vh] overflow-y-auto">
+        <p class="text-xs text-slate-400">
+          Dưới đây là các tài khoản từ D1 chưa có Provider rõ ràng. Hãy chọn Provider tương ứng cho từng mã:
+        </p>
+        <div id="bulk-assign-list" class="space-y-2.5"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="fixed bottom-16 sm:bottom-6 right-4 sm:right-6 z-50 bg-slate-900/95 border border-emerald-500/40 text-white text-xs md:text-sm px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 opacity-0 pointer-events-none transition-all duration-200 translate-y-2">
+    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+    <span id="toast-text">Đã copy mã OTP!</span>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. DANH MỤC PROVIDER & NHẬN DIỆN THÔNG MINH (AUTO-DETECT ENGINE)
+    // =========================================================================
+    const KNOWN_PROVIDERS = [
+      {
+        id: 'GitHub',
+        keywords: ['github', 'gh'],
+        color: 'bg-slate-700/60 text-white border-slate-500/40',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11.05 11.05 0 015.78 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.13 0 1.54-.01 2.78-.01 3.16 0 .31.21.68.8.56A11.51 11.51 0 0023.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>`
+      },
+      {
+        id: 'Google',
+        keywords: ['google', 'gmail', 'youtube', 'gcp'],
+        color: 'bg-red-500/15 text-red-300 border-red-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27 3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10 5.35 0 9.25-3.67 9.25-9.09 0-1.15-.15-1.81-.15-1.81z"/></svg>`
+      },
+      {
+        id: 'Cloudflare',
+        keywords: ['cloudflare', 'cf', 'workers', 'wrangler'],
+        color: 'bg-orange-500/15 text-orange-300 border-orange-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 17.5h-11a3.5 3.5 0 01-.4-6.98A5.5 5.5 0 0115.7 8.1a4 4 0 01.8 7.9z"/></svg>`
+      },
+      {
+        id: 'AWS',
+        keywords: ['aws', 'amazon', 'amazon web services'],
+        color: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L3 7v10l9 5 9-5V7l-9-5zm0 2.18l6.82 3.79L12 11.76 5.18 7.97 12 4.18z"/></svg>`
+      },
+      {
+        id: 'Microsoft',
+        keywords: ['microsoft', 'azure', 'outlook', 'hotmail', 'office', 'live'],
+        color: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8.5v8.5H3V3zm9.5 0H21v8.5h-8.5V3zM3 12.5h8.5V21H3v-8.5zm9.5 0H21V21h-8.5v-8.5z"/></svg>`
+      },
+      {
+        id: 'Discord',
+        keywords: ['discord'],
+        color: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 00-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 00-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.01.06.02.09.01 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>`
+      },
+      {
+        id: 'Facebook',
+        keywords: ['facebook', 'fb', 'meta', 'instagram'],
+        color: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M22 12c0-5.52-4.48-10-10-10S2 6.48 2 12c0 4.84 3.44 8.87 8 9.8V15H8v-3h2V9.5C10 7.57 11.57 6 13.5 6H16v3h-2c-.55 0-1 .45-1 1v2h3v3h-3v6.95c5.05-.5 9-4.76 9-9.95z"/></svg>`
+      },
+      {
+        id: 'Binance',
+        keywords: ['binance', 'bnb', 'crypto', 'coinbase', 'okx', 'bybit'],
+        color: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3L8.5 6.5l1.77 1.77L12 6.54l1.73 1.73L15.5 6.5 12 3zm-5.5 5.5L3 12l3.5 3.5 1.77-1.77L6.54 12l1.73-1.73L6.5 8.5zm11 0l-1.77 1.77L17.46 12l-1.73 1.73L17.5 15.5 21 12l-3.5-3.5zM12 9.5L9.5 12l2.5 2.5 2.5-2.5L12 9.5zm0 7.96l-1.73-1.73L8.5 17.5 12 21l3.5-3.5-1.77-1.77L12 17.46z"/></svg>`
+      },
+      {
+        id: 'Telegram',
+        keywords: ['telegram', 'tg'],
+        color: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.12.02-1.96 1.25-5.54 3.69-.52.36-1 .53-1.42.52-.47-.01-1.37-.26-2.03-.48-.82-.27-1.47-.42-1.42-.88.03-.24.35-.49.96-.75 3.78-1.65 6.31-2.74 7.58-3.27 3.61-1.51 4.35-1.77 4.84-1.78.11 0 .35.03.5.15.13.1.17.24.18.34.02.08.02.24 0 .41z"/></svg>`
+      },
+      {
+        id: 'Steam',
+        keywords: ['steam', 'valve', 'epic', 'riot'],
+        color: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 00-9.95 9.04l5.37 2.22a2.82 2.82 0 011.6-.51l2.4-3.48v-.05a3.78 3.78 0 113.78 3.78h-.08l-3.42 2.44c0 .19-.03.38-.08.56a2.83 2.83 0 01-5.49-.31L2.47 14.2A10 10 0 1012 2z"/></svg>`
+      },
+      {
+        id: 'Vercel',
+        keywords: ['vercel', 'netlify', 'digitalocean', 'heroku', 'render', 'supabase'],
+        color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l10 18H2L12 3z"/></svg>`
+      },
+      {
+        id: 'OpenAI',
+        keywords: ['openai', 'chatgpt', 'anthropic', 'claude'],
+        color: 'bg-teal-500/15 text-teal-300 border-teal-500/30',
+        icon: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="9"/></svg>`
+      }
+    ];
+
+    const QUICK_PROVIDERS = ['GitHub', 'Google', 'Cloudflare', 'AWS', 'Microsoft', 'Discord', 'Facebook', 'Binance', 'Telegram'];
+
+    // Trạng thái toàn cục
+    const API_ENDPOINT = new URL('/api/accounts', window.location.origin).href;
+    const LOCAL_STORAGE_ACCOUNTS_KEY = 'cloud_totp_accounts_v2';
+    const LOCAL_STORAGE_META_KEY = 'cloud_totp_meta_v2';
+    const LOCAL_STORAGE_PREFS_KEY = 'cloud_totp_prefs_v2';
+
+    let accounts = [];
+    let activeProviderTab = 'ALL';
+    let searchQuery = '';
+    let sortMode = 'pinned_newest';
+    let isGridMode = true;
+    let isPrivacyMode = false;
+    let autoSaveOnScan = false;
+    let isCloudConnected = true;
+
+    // Camera state
+    let cameraStream = null;
+    let cameraFacingMode = 'environment';
+    let scannerRafId = null;
+    let torchEnabled = false;
+    let lastScannedRaw = '';
+    let lastScannedSecret = '';
+
+    // =========================================================================
+    // 2. HÀM TIỆN ÍCH STORAGE & PREFERENCES (SAFE CHO CANVAS & TRÌNH DUYỆT)
+    // =========================================================================
+    function safeGetStorage(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch (_) {
+        return fallback;
+      }
+    }
+
+    function safeSetStorage(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch (_) {}
+    }
+
+    function getLocalMeta() {
+      return safeGetStorage(LOCAL_STORAGE_META_KEY, {});
+    }
+
+    function saveLocalMetaForAccount(id, patch) {
+      const meta = getLocalMeta();
+      const key = String(id);
+      meta[key] = Object.assign({}, meta[key] || {}, patch);
+      safeSetStorage(LOCAL_STORAGE_META_KEY, meta);
+    }
+
+    // =========================================================================
+    // 3. NHẬN DIỆN PROVIDER & PHÂN TÍCH OTPAUTH://
+    // =========================================================================
+    function detectProviderFromText(issuerText, accountNameText) {
+      const combined = `${issuerText || ''} ${accountNameText || ''}`.toLowerCase();
+
+      for (const p of KNOWN_PROVIDERS) {
+        for (const kw of p.keywords) {
+          const regex = new RegExp(`(^|[^a-z0-9])${kw}([^a-z0-9]|$)`, 'i');
+          if (regex.test(combined) || combined.includes(kw)) {
+            return p.id;
+          }
+        }
+      }
+
+      // Nếu có tiền tố dạng "Provider - user" hoặc "Provider (user)" hoặc "Provider: user"
+      const rawIssuer = (issuerText || '').trim();
+      if (rawIssuer) return rawIssuer;
+
+      const rawName = (accountNameText || '').trim();
+      const bracketMatch = rawName.match(/^\[([^\]]+)\]\s*(.+)$/);
+      if (bracketMatch) return bracketMatch[1].trim();
+
+      const sepMatch = rawName.match(/^([A-Za-z0-9._\s]{2,20}?)\s*(?:[-:|]|\()\s*.+/);
+      if (sepMatch) return sepMatch[1].trim();
+
+      // Kiểm tra tên miền email (VD: user@gmail.com -> Google)
+      if (rawName.includes('@gmail.com')) return 'Google';
+      if (rawName.includes('@outlook.com') || rawName.includes('@hotmail.com')) return 'Microsoft';
+      if (rawName.includes('@icloud.com')) return 'Apple';
+
+      return 'Khác';
+    }
+
+    function getProviderStyle(providerName) {
+      const norm = (providerName || 'Khác').trim().toLowerCase();
+      const matched = KNOWN_PROVIDERS.find(p => p.id.toLowerCase() === norm || p.keywords.includes(norm));
+      if (matched) return matched;
+      return {
+        id: providerName || 'Khác',
+        color: 'bg-slate-800 text-slate-300 border-slate-700',
+        icon: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>`
+      };
+    }
+
+    // Phân tích chuỗi otpauth://totp/... hoặc Secret Base32 trần
+    function parseOtpAuthInput(rawInput) {
+      const text = (rawInput || '').trim();
+      if (!text) return null;
+
+      if (text.toLowerCase().startsWith('otpauth://')) {
+        try {
+          const url = new URL(text);
+          const params = new URLSearchParams(url.search);
+          const secret = (params.get('secret') || '').replace(/\s+/g, '').toUpperCase();
+          if (!secret) return null;
+
+          let issuer = (params.get('issuer') || '').trim();
+          let rawLabel = decodeURIComponent(url.pathname.replace(/^\/\/(totp|hotp)\/|^\//i, '')).trim();
+          let accountLabel = rawLabel;
+
+          // Nếu label có dạng "Issuer:account@email.com"
+          if (rawLabel.includes(':')) {
+            const parts = rawLabel.split(':');
+            const prefixIssuer = parts[0].trim();
+            const restLabel = parts.slice(1).join(':').trim();
+            if (!issuer && prefixIssuer) issuer = prefixIssuer;
+            if (restLabel) accountLabel = restLabel;
+          }
+
+          const detectedProvider = detectProviderFromText(issuer, accountLabel);
+          const displayName = accountLabel || issuer || 'Tài khoản 2FA';
+          const digits = Number(params.get('digits')) === 8 ? 8 : 6;
+          const period = Number(params.get('period')) === 60 ? 60 : 30;
+          const rawAlgo = (params.get('algorithm') || 'SHA1').toUpperCase().replace('SHA', 'SHA-').replace('SHA--', 'SHA-');
+          const algorithm = ['SHA-1', 'SHA-256', 'SHA-512'].includes(rawAlgo) ? rawAlgo : 'SHA-1';
+
+          return {
+            secret,
+            name: displayName,
+            provider: detectedProvider,
+            digits,
+            period,
+            algorithm
+          };
+        } catch (_) {
+          return null;
+        }
+      }
+
+      // Kiểm tra nếu người dùng quét QR chỉ chứa Base32 Secret
+      const cleanedBase32 = text.replace(/\s+/g, '').toUpperCase();
+      if (/^[A-Z2-7]+=*$/.test(cleanedBase32) && cleanedBase32.length >= 8) {
+        return {
+          secret: cleanedBase32,
+          name: '',
+          provider: '',
+          digits: 6,
+          period: 30,
+          algorithm: 'SHA-1'
+        };
+      }
+
+      return null;
+    }
+
+    // Chuẩn hoá bản ghi tài khoản từ D1 (tương thích ngược với bảng chỉ có id, name, secret)
+    function normalizeAccountRecord(acc) {
+      const localMeta = getLocalMeta()[String(acc.id)] || {};
+      let rawName = (acc.name || 'Tài khoản').trim();
+      let provider = (acc.provider || localMeta.provider || '').trim();
+
+      // Nếu tên lưu dạng "Provider - Account" hoặc "Provider (Account)" từ bản cũ
+      if (!provider) {
+        provider = detectProviderFromText('', rawName);
+      }
+
+      // Làm gọn tên hiển thị nếu đã tách được provider
+      let cleanDisplayName = rawName;
+      const prefixPattern = new RegExp(`^\\[?${provider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]?\\s*[-:|]\\s*(.+)$`, 'i');
+      const m1 = rawName.match(prefixPattern);
+      if (m1 && m1[1]) {
+        cleanDisplayName = m1[1].trim();
+      } else {
+        const parenPattern = new RegExp(`^${provider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\((.+)\\)$`, 'i');
+        const m2 = rawName.match(parenPattern);
+        if (m2 && m2[1]) cleanDisplayName = m2[1].trim();
+      }
+
+      const pinned = Boolean(acc.pinned !== undefined ? Number(acc.pinned) : localMeta.pinned);
+      const copyCount = Number(localMeta.copyCount || 0);
+      const digits = Number(acc.digits || localMeta.digits) === 8 ? 8 : 6;
+      const period = Number(acc.period || localMeta.period) === 60 ? 60 : 30;
+      const algorithm = ['SHA-1', 'SHA-256', 'SHA-512'].includes(acc.algorithm || localMeta.algorithm)
+        ? (acc.algorithm || localMeta.algorithm)
+        : 'SHA-1';
+
+      return {
+        id: acc.id,
+        name: cleanDisplayName,
+        rawName: rawName,
+        secret: (acc.secret || '').replace(/\s+/g, '').toUpperCase(),
+        provider: provider || 'Khác',
+        pinned,
+        copyCount,
+        digits,
+        period,
+        algorithm
+      };
+    }
+
+    // =========================================================================
+    // 4. THUẬT TOÁN TẠO MÃ TOTP (HỖ TRỢ SHA-1/256/512, 6/8 SỐ & NEXT CODE)
+    // =========================================================================
+    function base32ToBytes(base32) {
+      const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+      const cleaned = (base32 || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+      let bits = '';
+      for (let i = 0; i < cleaned.length; i++) {
+        bits += alphabet.indexOf(cleaned[i]).toString(2).padStart(5, '0');
+      }
+      const bytes = new Uint8Array(Math.floor(bits.length / 8));
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(bits.slice(i * 8, (i + 1) * 8), 2);
+      }
+      return bytes;
+    }
+
+    async function generateTOTP(secret, options = {}) {
+      try {
+        const keyBytes = base32ToBytes(secret);
+        if (keyBytes.length === 0) return 'INVALID';
+
+        const period = Number(options.period) === 60 ? 60 : 30;
+        const digits = Number(options.digits) === 8 ? 8 : 6;
+        const algorithm = ['SHA-1', 'SHA-256', 'SHA-512'].includes(options.algorithm)
+          ? options.algorithm
+          : 'SHA-1';
+        const windowOffset = Number(options.windowOffset) || 0;
+
+        const counter = Math.floor(Math.floor(Date.now() / 1000) / period) + windowOffset;
+        const counterBytes = new Uint8Array(8);
+        let temp = counter;
+        for (let i = 7; i >= 0; i--) {
+          counterBytes[i] = temp & 0xff;
+          temp = Math.floor(temp / 256);
+        }
+
+        const cryptoKey = await crypto.subtle.importKey(
+          'raw', keyBytes, { name: 'HMAC', hash: algorithm }, false, ['sign']
+        );
+        const hmac = await crypto.subtle.sign('HMAC', cryptoKey, counterBytes);
+        const hmacBytes = new Uint8Array(hmac);
+
+        const offset = hmacBytes[hmacBytes.length - 1] & 0x0f;
+        const binary =
+          ((hmacBytes[offset] & 0x7f) << 24) |
+          ((hmacBytes[offset + 1] & 0xff) << 16) |
+          ((hmacBytes[offset + 2] & 0xff) << 8) |
+          (hmacBytes[offset + 3] & 0xff);
+
+        const mod = Math.pow(10, digits);
+        return (binary % mod).toString().padStart(digits, '0');
+      } catch (_) {
+        return 'ERROR';
+      }
+    }
+
+    function formatOtpDisplay(code) {
+      if (!code || code === 'INVALID' || code === 'ERROR') return code || 'ERROR';
+      if (code.length === 8) return `${code.slice(0, 4)} ${code.slice(4)}`;
+      if (code.length === 6) return `${code.slice(0, 3)} ${code.slice(3)}`;
+      return code;
+    }
+
+    // =========================================================================
+    // 5. KẾT NỐI CLOUDFLARE D1 & FALLBACK OFFLINE / DEMO CHO CANVAS
+    // =========================================================================
+    function getSampleAccounts() {
+      return [
+        { id: 101, name: 'dev.nguyen@github.com', secret: 'JBSWY3DPEHPK3PXP', provider: 'GitHub', pinned: 1, digits: 6, period: 30, algorithm: 'SHA-1' },
+        { id: 102, name: 'personal.mail@gmail.com', secret: 'HXDMVJECJJWSRB3H', provider: 'Google', pinned: 1, digits: 6, period: 30, algorithm: 'SHA-1' },
+        { id: 103, name: 'admin@cloudflare-workers.dev', secret: 'GEZDGNBVGY3TQOJQ', provider: 'Cloudflare', pinned: 0, digits: 6, period: 30, algorithm: 'SHA-1' },
+        { id: 104, name: 'prod-root@aws.amazon.com', secret: 'MFRGGZDFMZTWQ2LK', provider: 'AWS', pinned: 0, digits: 6, period: 30, algorithm: 'SHA-1' },
+        { id: 105, name: 'gamer_vn#8899', secret: 'KRSXG5CTMVRXEZLU', provider: 'Discord', pinned: 0, digits: 6, period: 30, algorithm: 'SHA-1' },
+        { id: 106, name: 'spot.trader@binance.com', secret: 'ONSWG4TFOQYTEMZU', provider: 'Binance', pinned: 0, digits: 6, period: 30, algorithm: 'SHA-1' },
+        { id: 107, name: 'Tài khoản cũ trên D1 (Chưa phân loại)', secret: 'JBSWY3DPEHPK3PXP', provider: 'Khác', pinned: 0, digits: 6, period: 30, algorithm: 'SHA-1' }
+      ];
+    }
+
+    function updateSyncStatusBadge(cloudOk) {
+      isCloudConnected = cloudOk;
+      const badge = document.getElementById('sync-badge');
+      const badgeText = document.getElementById('sync-badge-text');
+      if (cloudOk) {
+        badge.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+        badgeText.innerText = 'D1 Cloud';
+      } else {
+        badge.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30';
+        badgeText.innerText = 'Local / Demo';
+      }
+    }
+
+    async function fetchAccounts(showToastNotification = false) {
+      const refreshIcon = document.getElementById('icon-refresh');
+      if (refreshIcon) refreshIcon.classList.add('animate-spin');
+
+      try {
+        const res = await fetch(API_ENDPOINT);
+        if (!res.ok) throw new Error('API Error');
+        const data = await res.json();
+        if (!Array.isArray(data)) throw new Error('Invalid JSON');
+
+        accounts = data.map(normalizeAccountRecord);
+        safeSetStorage(LOCAL_STORAGE_ACCOUNTS_KEY, accounts);
+        updateSyncStatusBadge(true);
+        if (showToastNotification) showToast('Đã đồng bộ dữ liệu mới nhất từ Cloudflare D1!');
+      } catch (_) {
+        // Fallback sang dữ liệu lưu trên máy hoặc mẫu demo khi chạy ngoài Worker D1
+        let cached = safeGetStorage(LOCAL_STORAGE_ACCOUNTS_KEY, null);
+        if (!Array.isArray(cached) || cached.length === 0) {
+          cached = getSampleAccounts();
+          safeSetStorage(LOCAL_STORAGE_ACCOUNTS_KEY, cached);
+        }
+        accounts = cached.map(normalizeAccountRecord);
+        updateSyncStatusBadge(false);
+        if (showToastNotification) showToast('Đang sử dụng bộ nhớ cục bộ (Local Mode)');
+      } finally {
+        if (refreshIcon) setTimeout(() => refreshIcon.classList.remove('animate-spin'), 350);
+        renderProviderTabs();
+        renderTokens();
+      }
+    }
+
+    // =========================================================================
+    // 6. HIỂN THỊ TABS PROVIDER & DANH SÁCH THẺ TOTP
+    // =========================================================================
+    function renderProviderTabs() {
+      const tabContainer = document.getElementById('provider-tabs');
+      if (!tabContainer) return;
+
+      const totalCount = accounts.length;
+      const pinnedCount = accounts.filter(a => a.pinned).length;
+
+      // Đếm số lượng theo từng Provider
+      const providerCounts = {};
+      for (const acc of accounts) {
+        const p = acc.provider || 'Khác';
+        providerCounts[p] = (providerCounts[p] || 0) + 1;
+      }
+
+      const providers = Object.keys(providerCounts).sort((a, b) => {
+        if (a === 'Khác') return 1;
+        if (b === 'Khác') return -1;
+        return providerCounts[b] - providerCounts[a] || a.localeCompare(b);
+      });
+
+      // Nếu tab đang chọn không còn tồn tại thì quay về ALL
+      if (activeProviderTab !== 'ALL' && activeProviderTab !== 'PINNED' && !providerCounts[activeProviderTab]) {
+        activeProviderTab = 'ALL';
+      }
+
+      let html = '';
+
+      // Tab Tất cả
+      const allActive = activeProviderTab === 'ALL';
+      html += `
+        <button onclick="selectProviderTab('ALL')"
+                class="shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition ${
+                  allActive
+                    ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-600/20'
+                    : 'bg-slate-900/90 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
+                }">
+          <span>Tất cả</span>
+          <span class="px-1.5 py-0.2 rounded-full text-[11px] ${allActive ? 'bg-blue-700 text-blue-100' : 'bg-slate-800 text-slate-400'}">${totalCount}</span>
+        </button>
+      `;
+
+      // Tab Đã ghim
+      if (pinnedCount > 0) {
+        const pinActive = activeProviderTab === 'PINNED';
+        html += `
+          <button onclick="selectProviderTab('PINNED')"
+                  class="shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition ${
+                    pinActive
+                      ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-lg shadow-amber-500/20'
+                      : 'bg-slate-900/90 text-amber-300 border-slate-800 hover:border-amber-500/40'
+                  }">
+            <span>⭐ Đã ghim</span>
+            <span class="px-1.5 py-0.2 rounded-full text-[11px] ${pinActive ? 'bg-amber-600/30 text-slate-950' : 'bg-slate-800 text-amber-300'}">${pinnedCount}</span>
+          </button>
+        `;
+      }
+
+      // Các Tab Provider tự động
+      for (const prov of providers) {
+        const isActive = activeProviderTab === prov;
+        const style = getProviderStyle(prov);
+        const safeProv = prov.replace(/'/g, "\\'");
+        html += `
+          <button onclick="selectProviderTab('${safeProv}')"
+                  class="shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition ${
+                    isActive
+                      ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-600/20'
+                      : 'bg-slate-900/90 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
+                  }">
+            <span class="opacity-90">${style.icon}</span>
+            <span>${escapeHtml(prov)}</span>
+            <span class="px-1.5 py-0.2 rounded-full text-[11px] ${isActive ? 'bg-blue-700 text-blue-100' : 'bg-slate-800 text-slate-400'}">${providerCounts[prov]}</span>
+          </button>
+        `;
+      }
+
+      tabContainer.innerHTML = html;
+
+      // Hiển thị banner gợi ý nếu có tài khoản từ D1 cũ đang nằm ở mục 'Khác'
+      const uncategorizedCount = providerCounts['Khác'] || 0;
+      const legacyBanner = document.getElementById('legacy-d1-banner');
+      const legacyCountEl = document.getElementById('legacy-count');
+      if (legacyBanner && legacyCountEl) {
+        legacyCountEl.innerText = String(uncategorizedCount);
+        legacyBanner.classList.toggle('hidden', uncategorizedCount === 0);
+      }
+    }
+
+    let currentAssignAccountId = null;
+
+    function getExistingUserProviders() {
+      const set = new Set();
+      for (const acc of accounts) {
+        if (acc.provider && acc.provider !== 'Khác') {
+          set.add(acc.provider);
+        }
+      }
+      return Array.from(set);
+    }
+
+    function openQuickProviderModal(accountId = null) {
+      const modal = document.getElementById('provider-assign-modal');
+      const singlePanel = document.getElementById('single-assign-panel');
+      const bulkPanel = document.getElementById('bulk-assign-panel');
+      const existingProviders = getExistingUserProviders();
+
+      if (accountId !== null) {
+        currentAssignAccountId = Number(accountId);
+        const acc = accounts.find(a => Number(a.id) === currentAssignAccountId);
+        if (!acc) return;
+
+        document.getElementById('provider-modal-title').innerText = 'Gán vào Provider';
+        document.getElementById('provider-modal-subtitle').innerText = 'Chọn 1 chạm để chuyển tài khoản này vào tab Provider tương ứng';
+        singlePanel.classList.remove('hidden');
+        bulkPanel.classList.add('hidden');
+
+        document.getElementById('assign-target-name').innerText = acc.name;
+        document.getElementById('assign-target-current').innerText = `Hiện tại: ${acc.provider}`;
+        document.getElementById('custom-assign-provider').value = acc.provider !== 'Khác' ? acc.provider : '';
+
+        // Render các Provider đang có sẵn của người dùng
+        const existingSection = document.getElementById('existing-providers-section');
+        const existingContainer = document.getElementById('existing-provider-buttons');
+        if (existingProviders.length > 0) {
+          existingSection.classList.remove('hidden');
+          existingContainer.innerHTML = existingProviders.map(p => {
+            const style = getProviderStyle(p);
+            const isCurrent = acc.provider === p;
+            const safeP = p.replace(/'/g, "\'");
+            return `
+              <button onclick="assignAccountToProvider(${acc.id}, '${safeP}')"
+                      class="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold border transition ${
+                        isCurrent
+                          ? 'bg-blue-600 text-white border-blue-500 shadow'
+                          : 'bg-slate-950 hover:bg-slate-800 text-slate-200 border-slate-800'
+                      }">
+                <span>${style.icon}</span>
+                <span>${escapeHtml(p)}</span>
+              </button>
+            `;
+          }).join('');
+        } else {
+          existingSection.classList.add('hidden');
+        }
+
+        // Render danh sách Provider phổ biến
+        const presetContainer = document.getElementById('preset-provider-buttons');
+        presetContainer.innerHTML = KNOWN_PROVIDERS.map(p => {
+          const isCurrent = acc.provider === p.id;
+          return `
+            <button onclick="assignAccountToProvider(${acc.id}, '${p.id}')"
+                    class="flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs font-medium border transition ${
+                      isCurrent
+                        ? 'bg-blue-600 text-white border-blue-500'
+                        : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800/90'
+                    }">
+              <span class="shrink-0">${p.icon}</span>
+              <span class="truncate">${p.id}</span>
+            </button>
+          `;
+        }).join('');
+      } else {
+        // Chế độ phân loại hàng loạt cho các tài khoản D1 cũ nằm ở mục 'Khác'
+        currentAssignAccountId = null;
+        document.getElementById('provider-modal-title').innerText = 'Phân loại nhanh dữ liệu D1 cũ';
+        document.getElementById('provider-modal-subtitle').innerText = 'Gán các tài khoản chưa phân loại vào những Provider đang có của bạn';
+        singlePanel.classList.add('hidden');
+        bulkPanel.classList.remove('hidden');
+        renderBulkAssignList();
+      }
+
+      modal.classList.remove('hidden');
+    }
+
+    function renderBulkAssignList() {
+      const listEl = document.getElementById('bulk-assign-list');
+      const uncategorized = accounts.filter(a => !a.provider || a.provider === 'Khác');
+      if (uncategorized.length === 0) {
+        listEl.innerHTML = `<div class="text-center text-emerald-400 py-6 text-xs font-semibold">🎉 Tất cả tài khoản đều đã được gán vào Provider!</div>`;
+        return;
+      }
+
+      const existing = getExistingUserProviders();
+      const quickOptions = Array.from(new Set([...existing, ...QUICK_PROVIDERS]));
+
+      listEl.innerHTML = uncategorized.map(acc => {
+        const chips = quickOptions.map(p => {
+          const safeP = p.replace(/'/g, "\'");
+          return `
+            <button onclick="assignAccountToProvider(${acc.id}, '${safeP}', true)"
+                    class="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-blue-600 text-slate-300 hover:text-white border border-slate-800 hover:border-blue-500 text-[11px] font-medium transition">
+              + ${escapeHtml(p)}
+            </button>
+          `;
+        }).join('');
+
+        return `
+          <div class="bg-slate-950/90 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-semibold text-white">${escapeHtml(acc.name)}</span>
+              <button onclick="openQuickProviderModal(${acc.id})" class="text-[11px] text-blue-400 hover:text-blue-300">
+                Tuỳ chỉnh khác →
+              </button>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              ${chips}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function closeQuickProviderModal() {
+      document.getElementById('provider-assign-modal').classList.add('hidden');
+    }
+
+    async function applyCustomProviderSingle() {
+      const val = document.getElementById('custom-assign-provider').value.trim();
+      if (!val || currentAssignAccountId === null) return;
+      await assignAccountToProvider(currentAssignAccountId, val, false);
+    }
+
+    async function assignAccountToProvider(id, newProvider, stayInBulkModal = false) {
+      const acc = accounts.find(a => Number(a.id) === Number(id));
+      if (!acc || !newProvider) return;
+
+      acc.provider = newProvider.trim();
+      const combinedName = acc.provider !== 'Khác' ? `${acc.provider} - ${acc.name}` : acc.name;
+
+      saveLocalMetaForAccount(id, { provider: acc.provider, pinned: acc.pinned });
+      safeSetStorage(LOCAL_STORAGE_ACCOUNTS_KEY, accounts);
+
+      // Đồng bộ ngay lên Cloudflare D1 (cập nhật cả cột provider mới lẫn cột name cho bảng cũ)
+      try {
+        await fetch(API_ENDPOINT, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: acc.id,
+            name: combinedName,
+            provider: acc.provider,
+            pinned: acc.pinned ? 1 : 0,
+            digits: acc.digits,
+            period: acc.period,
+            algorithm: acc.algorithm
+          })
+        });
+      } catch (_) {}
+
+      renderProviderTabs();
+      renderTokens();
+      showToast(`Đã chuyển "${acc.name}" vào tab ${acc.provider}!`);
+
+      if (stayInBulkModal) {
+        renderBulkAssignList();
+        const remaining = accounts.filter(a => !a.provider || a.provider === 'Khác').length;
+        if (remaining === 0) setTimeout(closeQuickProviderModal, 600);
+      } else {
+        closeQuickProviderModal();
+      }
+    }
+
+    function selectProviderTab(tab) {
+      activeProviderTab = tab;
+      renderProviderTabs();
+      renderTokens();
+    }
+
+    function getFilteredAndSortedAccounts() {
+      let list = accounts.slice();
+
+      // 1. Lọc theo Tab Provider
+      if (activeProviderTab === 'PINNED') {
+        list = list.filter(a => a.pinned);
+      } else if (activeProviderTab !== 'ALL') {
+        list = list.filter(a => (a.provider || 'Khác') === activeProviderTab);
+      }
+
+      // 2. Lọc theo từ khoá tìm kiếm
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        list = list.filter(a =>
+          (a.name || '').toLowerCase().includes(q) ||
+          (a.provider || '').toLowerCase().includes(q) ||
+          (a.rawName || '').toLowerCase().includes(q)
+        );
+      }
+
+      // 3. Sắp xếp (luôn ưu tiên ghim lên đầu nếu ở chế độ mặc định)
+      list.sort((a, b) => {
+        if (sortMode === 'pinned_newest') {
+          if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+          return Number(b.id) - Number(a.id);
+        }
+        if (sortMode === 'name_asc') {
+          if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+          return (a.name || '').localeCompare(b.name || '');
+        }
+        if (sortMode === 'name_desc') {
+          if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+          return (b.name || '').localeCompare(a.name || '');
+        }
+        if (sortMode === 'provider_asc') {
+          if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+          return (a.provider || '').localeCompare(b.provider || '') || (a.name || '').localeCompare(b.name || '');
+        }
+        if (sortMode === 'most_used') {
+          if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+          return (b.copyCount || 0) - (a.copyCount || 0) || Number(b.id) - Number(a.id);
+        }
+        return 0;
+      });
+
+      return list;
+    }
+
+    async function renderTokens() {
+      const container = document.getElementById('tokens-list');
+      if (!container) return;
+
+      container.className = isGridMode
+        ? 'grid grid-cols-1 md:grid-cols-2 gap-3.5'
+        : 'flex flex-col gap-3';
+
+      const filtered = getFilteredAndSortedAccounts();
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full bg-slate-900/60 border border-dashed border-slate-800 rounded-2xl p-10 text-center space-y-3">
+            <div class="w-12 h-12 rounded-2xl bg-slate-800/80 text-slate-400 flex items-center justify-center mx-auto">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+              </svg>
+            </div>
+            <div class="text-sm font-semibold text-slate-300">
+              ${accounts.length === 0 ? 'Chưa có tài khoản TOTP nào' : 'Không tìm thấy tài khoản phù hợp'}
+            </div>
+            <p class="text-xs text-slate-500 max-w-sm mx-auto">
+              ${accounts.length === 0
+                ? 'Hãy bấm "Quét QR" để quét từ camera điện thoại, tải ảnh QR lên hoặc nhập mã thủ công.'
+                : 'Thử xoá bộ lọc tìm kiếm hoặc chuyển sang tab Provider "Tất cả".'}
+            </p>
+            <div class="pt-1 flex justify-center gap-2">
+              <button onclick="openAddModal('scan')" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition">
+                📷 Quét mã QR
+              </button>
+              ${searchQuery ? `<button onclick="clearSearch()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-xl transition">Xoá tìm kiếm</button>` : ''}
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      const epoch = Math.floor(Date.now() / 1000);
+      const remaining30 = 30 - (epoch % 30);
+      const isExpiringSoon = remaining30 <= 7;
+
+      let html = '';
+      for (const acc of filtered) {
+        const code = await generateTOTP(acc.secret, {
+          digits: acc.digits,
+          period: acc.period,
+          algorithm: acc.algorithm,
+          windowOffset: 0
+        });
+        const nextCode = await generateTOTP(acc.secret, {
+          digits: acc.digits,
+          period: acc.period,
+          algorithm: acc.algorithm,
+          windowOffset: 1
+        });
+
+        const formattedCode = formatOtpDisplay(code);
+        const formattedNext = formatOtpDisplay(nextCode);
+        const style = getProviderStyle(acc.provider);
+        const blurClass = isPrivacyMode ? 'otp-blur' : '';
+
+        html += `
+          <div class="group card-enter relative bg-slate-900/90 hover:bg-slate-900 border ${
+            acc.pinned ? 'border-amber-500/40 shadow-lg shadow-amber-500/5' : 'border-slate-800/90 hover:border-slate-700'
+          } rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between gap-3">
+
+            <!-- Top Row: Provider Badge + Account Name + Action Icons -->
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex items-center gap-2.5 min-w-0">
+                <div class="w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${style.color}">
+                  ${style.icon}
+                </div>
+                <div class="min-w-0">
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <button onclick="openQuickProviderModal(${acc.id})" title="Bấm để đổi / gán nhanh vào Provider đang có"
+                            class="text-[11px] font-semibold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 hover:brightness-125 transition ${style.color}">
+                      <span>${escapeHtml(acc.provider === 'Khác' ? '➕ Gán Provider' : acc.provider)}</span>
+                      <svg class="w-3 h-3 opacity-70" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                      </svg>
+                    </button>
+                    ${acc.period === 60 ? `<span class="text-[10px] font-mono bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">60s</span>` : ''}
+                  </div>
+                  <div class="text-sm font-semibold text-slate-100 truncate mt-1" title="${escapeHtml(acc.name)}">
+                    ${escapeHtml(acc.name)}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Pin / QR / Delete Controls -->
+              <div class="flex items-center gap-1 shrink-0">
+                <button onclick="togglePinAccount(${acc.id})" title="${acc.pinned ? 'Bỏ ghim' : 'Ghim lên đầu'}"
+                        class="p-1.5 rounded-lg transition ${
+                          acc.pinned
+                            ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20'
+                            : 'text-slate-500 hover:text-amber-300 hover:bg-slate-800'
+                        }">
+                  <svg class="w-4 h-4" fill="${acc.pinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
+                  </svg>
+                </button>
+                <button onclick="openDetailModal(${acc.id})" title="Xem mã QR chuyển máy & Chỉnh sửa"
+                        class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Bottom Row: OTP Code + Next Code Preview + Copy Button -->
+            <div class="flex items-end justify-between gap-2 pt-1 border-t border-slate-800/60">
+              <div onclick="copyCode('${code}', ${acc.id}, '${escapeHtml(acc.provider)}')"
+                   class="cursor-pointer select-all group/code" title="Bấm để copy mã OTP">
+                <div class="text-2xl sm:text-3xl font-mono font-bold tracking-wider ${
+                  isExpiringSoon ? 'text-amber-400' : 'text-white group-hover/code:text-blue-400'
+                } transition ${blurClass}">
+                  ${formattedCode}
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <!-- Next OTP Preview (Hiển thị rõ khi còn <= 7s hoặc bấm vào để copy mã kế tiếp) -->
+                <button onclick="copyCode('${nextCode}', ${acc.id}, '${escapeHtml(acc.provider)}', true)"
+                        title="Copy sớm mã của chu kỳ 30s kế tiếp"
+                        class="text-[11px] font-mono px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1 ${
+                          isExpiringSoon
+                            ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 animate-pulse'
+                            : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }">
+                  <span class="text-[10px] opacity-75">Kế:</span>
+                  <span class="font-semibold ${blurClass}">${formattedNext}</span>
+                </button>
+
+                <button onclick="copyCode('${code}', ${acc.id}, '${escapeHtml(acc.provider)}')"
+                        class="text-xs bg-slate-800 hover:bg-blue-600 text-slate-200 hover:text-white font-medium px-3 py-1.5 rounded-xl border border-slate-700 hover:border-blue-500 transition">
+                  Copy
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      container.innerHTML = html;
+    }
+
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // =========================================================================
+    // 7. THÊM, GHIM, CHỈNH SỬA & XOÁ TÀI KHOẢN
+    // =========================================================================
+    async function addAccount(customData = null) {
+      let name = '';
+      let provider = '';
+      let secretInput = '';
+      let digits = 6;
+      let period = 30;
+      let algorithm = 'SHA-1';
+      let pinned = false;
+
+      if (customData) {
+        name = customData.name || '';
+        provider = customData.provider || '';
+        secretInput = customData.secret || '';
+        digits = customData.digits || 6;
+        period = customData.period || 30;
+        algorithm = customData.algorithm || 'SHA-1';
+        pinned = Boolean(customData.pinned);
+      } else {
+        name = document.getElementById('issuer').value.trim();
+        provider = document.getElementById('provider-input').value.trim();
+        secretInput = document.getElementById('secret').value.trim();
+        digits = Number(document.getElementById('opt-digits').value) || 6;
+        period = Number(document.getElementById('opt-period').value) || 30;
+        algorithm = document.getElementById('opt-algo').value || 'SHA-1';
+        pinned = document.getElementById('opt-pinned').checked;
+      }
+
+      if (!secretInput) {
+        showToast('Vui lòng quét QR hoặc nhập Secret Key!', true);
+        return;
+      }
+
+      // Nếu nhập otpauth:// vào ô secret
+      if (secretInput.toLowerCase().startsWith('otpauth://')) {
+        const parsed = parseOtpAuthInput(secretInput);
+        if (!parsed) {
+          showToast('Định dạng otpauth:// không hợp lệ!', true);
+          return;
+        }
+        secretInput = parsed.secret;
+        if (!name) name = parsed.name;
+        if (!provider) provider = parsed.provider;
+        digits = parsed.digits;
+        period = parsed.period;
+        algorithm = parsed.algorithm;
+      }
+
+      const cleanSecret = secretInput.replace(/\s+/g, '').toUpperCase();
+      if (base32ToBytes(cleanSecret).length === 0) {
+        showToast('Secret Key chuẩn Base32 không hợp lệ!', true);
+        return;
+      }
+
+      if (!provider) {
+        provider = detectProviderFromText('', name);
+      }
+      if (!name) {
+        name = `${provider !== 'Khác' ? provider : 'Tài khoản'} (${cleanSecret.slice(0, 4)}...)`;
+      }
+
+      // Lưu dạng "Provider - Name" vào trường name để tương thích ngược với bảng D1 cũ chỉ có (id, name, secret)
+      const combinedNameForLegacyD1 = provider && provider !== 'Khác' && !name.toLowerCase().includes(provider.toLowerCase())
+        ? `${provider} - ${name}`
+        : name;
+
+      const btn = document.getElementById('btn-add');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'Đang lưu...';
+      }
+
+      let newId = Date.now();
+      try {
+        const res = await fetch(API_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: combinedNameForLegacyD1,
+            secret: cleanSecret,
+            provider,
+            pinned: pinned ? 1 : 0,
+            digits,
+            period,
+            algorithm
+          })
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json && json.id) newId = json.id;
+        } else {
+          throw new Error('D1 POST failed');
+        }
+      } catch (_) {
+        // Lưu vào localStorage khi ở chế độ Offline / Demo
+        const newRecord = normalizeAccountRecord({
+          id: newId,
+          name: combinedNameForLegacyD1,
+          secret: cleanSecret,
+          provider,
+          pinned: pinned ? 1 : 0,
+          digits,
+          period,
+          algorithm
+        });
+        accounts.unshift(newRecord);
+        safeSetStorage(LOCAL_STORAGE_ACCOUNTS_KEY, accounts);
+      }
+
+      saveLocalMetaForAccount(newId, { provider, pinned, digits, period, algorithm });
+
+      // Reset form
+      document.getElementById('issuer').value = '';
+      document.getElementById('provider-input').value = '';
+      document.getElementById('secret').value = '';
+      document.getElementById('opt-pinned').checked = false;
+      document.getElementById('manual-live-code').innerText = '';
+      document.getElementById('scanned-preview-box').classList.add('hidden');
+
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = '+ Lưu tài khoản';
+      }
+
+      closeAddModal();
+      showToast(`Đã lưu mã ${provider} (${name}) thành công!`);
+      await fetchAccounts(false);
+    }
+
+    async function togglePinAccount(id) {
+      const target = accounts.find(a => Number(a.id) === Number(id));
+      if (!target) return;
+
+      target.pinned = !target.pinned;
+      saveLocalMetaForAccount(id, {
+        provider: target.provider,
+        pinned: target.pinned,
+        digits: target.digits,
+        period: target.period,
+        algorithm: target.algorithm
+      });
+      safeSetStorage(LOCAL_STORAGE_ACCOUNTS_KEY, accounts);
+
+      renderProviderTabs();
+      renderTokens();
+      showToast(target.pinned ? `⭐ Đã ghim "${target.name}" lên đầu` : `Đã bỏ ghim "${target.name}"`);
+
+      try {
+        await fetch(API_ENDPOINT, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: target.id,
+            name: `${target.provider} - ${target.name}`,
+            provider: target.provider,
+            pinned: target.pinned ? 1 : 0,
+            digits: target.digits,
+            period: target.period,
+            algorithm: target.algorithm
+          })
+        });
+      } catch (_) {}
+    }
+
+    function openDetailModal(id) {
+      const acc = accounts.find(a => Number(a.id) === Number(id));
+      if (!acc) return;
+
+      document.getElementById('edit-id').value = acc.id;
+      document.getElementById('edit-name').value = acc.name;
+      document.getElementById('edit-provider').value = acc.provider;
+
+      const label = encodeURIComponent(`${acc.provider}:${acc.name}`);
+      const issuer = encodeURIComponent(acc.provider);
+      const uri = `otpauth://totp/${label}?secret=${acc.secret}&issuer=${issuer}&digits=${acc.digits || 6}&period=${acc.period || 30}&algorithm=${(acc.algorithm || 'SHA-1').replace('-', '')}`;
+      document.getElementById('edit-uri').value = uri;
+
+      // Vẽ mã QR chuẩn bằng qrcode-generator
+      const qrContainer = document.getElementById('export-qr-container');
+      qrContainer.innerHTML = '';
+      try {
+        if (typeof qrcode === 'function') {
+          const qr = qrcode(0, 'M');
+          qr.addData(uri);
+          qr.make();
+          qrContainer.innerHTML = qr.createSvgTag(4, 2);
+        }
+      } catch (_) {
+        qrContainer.innerHTML = '<div class="text-xs text-slate-600 p-4">Không thể tạo ảnh QR</div>';
+      }
+
+      document.getElementById('detail-modal').classList.remove('hidden');
+    }
+
+    function closeDetailModal() {
+      document.getElementById('detail-modal').classList.add('hidden');
+    }
+
+    function copyEditUri() {
+      const uri = document.getElementById('edit-uri').value;
+      if (uri) copyTextToClipboard(uri, 'Đã copy đường dẫn otpauth://!');
+    }
+
+    async function saveEditedAccount() {
+      const id = Number(document.getElementById('edit-id').value);
+      const newName = document.getElementById('edit-name').value.trim();
+      const newProvider = document.getElementById('edit-provider').value.trim() || 'Khác';
+
+      const acc = accounts.find(a => Number(a.id) === id);
+      if (!acc || !newName) return;
+
+      acc.name = newName;
+      acc.provider = newProvider;
+      const combinedName = newProvider !== 'Khác' ? `${newProvider} - ${newName}` : newName;
+
+      saveLocalMetaForAccount(id, { provider: newProvider, pinned: acc.pinned });
+      safeSetStorage(LOCAL_STORAGE_ACCOUNTS_KEY, accounts);
+
+      try {
+        await fetch(API_ENDPOINT, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id,
+            name: combinedName,
+            provider: newProvider,
+            pinned: acc.pinned ? 1 : 0,
+            digits: acc.digits,
+            period: acc.period,
+            algorithm: acc.algorithm
+          })
+        });
+      } catch (_) {}
+
+      closeDetailModal();
+      renderProviderTabs();
+      renderTokens();
+      showToast('Đã cập nhật thông tin tài khoản!');
+    }
+
+    async function confirmDeleteCurrentAccount() {
+      const id = Number(document.getElementById('edit-id').value);
+      const acc = accounts.find(a => Number(a.id) === id);
+      if (!acc) return;
+
+      accounts = accounts.filter(a => Number(a.id) !== id);
+      safeSetStorage(LOCAL_STORAGE_ACCOUNTS_KEY, accounts);
+
+      try {
+        const delUrl = `${API_ENDPOINT}?id=${encodeURIComponent(id)}`;
+        await fetch(delUrl, { method: 'DELETE' });
+      } catch (_) {}
+
+      closeDetailModal();
+      renderProviderTabs();
+      renderTokens();
+      showToast(`Đã xoá mã "${acc.name}"`);
+    }
+
+    // =========================================================================
+    // 8. QUÉT QR TỪ CAMERA DI ĐỘNG & QUÉT TỪ ẢNH (UPLOAD / PASTE / DRAG-DROP)
+    // =========================================================================
+    function openAddModal(mode = 'scan') {
+      document.getElementById('add-modal').classList.remove('hidden');
+      renderQuickProviderChips();
+      if (mode === 'manual') {
+        switchAddTab('manual');
+      } else {
+        switchAddTab('camera');
+      }
+    }
+
+    function closeAddModal() {
+      stopCameraScanner();
+      document.getElementById('add-modal').classList.add('hidden');
+    }
+
+    function switchAddTab(tab) {
+      const tabs = ['camera', 'image', 'manual'];
+      for (const t of tabs) {
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (btn) {
+          btn.className = t === tab
+            ? 'py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition bg-blue-600 text-white shadow'
+            : 'py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition text-slate-400 hover:text-white';
+        }
+      }
+
+      const panelCamera = document.getElementById('panel-camera');
+      const panelImage = document.getElementById('panel-image');
+
+      if (tab === 'camera') {
+        panelCamera.classList.remove('hidden');
+        panelImage.classList.add('hidden');
+        startCameraScanner();
+      } else if (tab === 'image') {
+        stopCameraScanner();
+        panelCamera.classList.add('hidden');
+        panelImage.classList.remove('hidden');
+      } else {
+        stopCameraScanner();
+        panelCamera.classList.add('hidden');
+        panelImage.classList.add('hidden');
+        document.getElementById('issuer').focus();
+      }
+    }
+
+    async function startCameraScanner() {
+      stopCameraScanner();
+      const video = document.getElementById('qr-video');
+      const placeholder = document.getElementById('camera-placeholder');
+      const overlay = document.getElementById('scanner-overlay');
+      const statusText = document.getElementById('camera-status-text');
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        statusText.innerText = 'Trình duyệt hiện tại không cấp quyền Camera. Bạn có thể chuyển sang tab "Quét từ Ảnh" để chọn ảnh chụp màn hình QR.';
+        return;
+      }
+
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: cameraFacingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+
+        video.srcObject = cameraStream;
+        await video.play();
+
+        video.classList.remove('hidden');
+        overlay.classList.remove('hidden');
+        placeholder.classList.add('hidden');
+
+        // Kiểm tra xem camera điện thoại có hỗ trợ đèn Flash (Torch) không
+        const track = cameraStream.getVideoTracks()[0];
+        const btnTorch = document.getElementById('btn-torch');
+        if (track && typeof track.getCapabilities === 'function') {
+          const caps = track.getCapabilities();
+          if (caps && caps.torch) {
+            btnTorch.classList.remove('hidden');
+          } else {
+            btnTorch.classList.add('hidden');
+          }
+        }
+
+        scanVideoFrame();
+      } catch (_) {
+        statusText.innerText = 'Không thể truy cập Camera (có thể chưa cấp quyền hoặc đang ở trong khung xem trước). Hãy dùng tab "Quét từ Ảnh" hoặc nhập tay nhé!';
+      }
+    }
+
+    function stopCameraScanner() {
+      if (scannerRafId) {
+        cancelAnimationFrame(scannerRafId);
+        scannerRafId = null;
+      }
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+      }
+      torchEnabled = false;
+      const video = document.getElementById('qr-video');
+      const placeholder = document.getElementById('camera-placeholder');
+      const overlay = document.getElementById('scanner-overlay');
+      if (video) video.classList.add('hidden');
+      if (overlay) overlay.classList.add('hidden');
+      if (placeholder) placeholder.classList.remove('hidden');
+    }
+
+    function switchCameraFacing() {
+      cameraFacingMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
+      startCameraScanner();
+    }
+
+    async function toggleCameraTorch() {
+      if (!cameraStream) return;
+      const track = cameraStream.getVideoTracks()[0];
+      if (!track) return;
+      try {
+        torchEnabled = !torchEnabled;
+        await track.applyConstraints({ advanced: [{ torch: torchEnabled }] });
+      } catch (_) {}
+    }
+
+    function scanVideoFrame() {
+      const video = document.getElementById('qr-video');
+      const canvas = document.getElementById('qr-canvas');
+      if (!video || !canvas || !cameraStream) return;
+
+      if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        if (typeof jsQR === 'function') {
+          const code = jsQR(imgData.data, imgData.width, imgData.height, {
+            inversionAttempts: 'attemptBoth'
+          });
+          if (code && code.data) {
+            handleDecodedQrString(code.data);
+            return;
+          }
+        }
+      }
+
+      scannerRafId = requestAnimationFrame(scanVideoFrame);
+    }
+
+    // Xử lý quét ảnh QR từ file tải lên / kéo thả / dán clipboard
+    function triggerQuickImageScan() {
+      document.getElementById('quick-qr-file').click();
+    }
+
+    function handleQuickImageFile(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      openAddModal('scan');
+      switchAddTab('image');
+      decodeQrFromImageFile(file);
+      event.target.value = '';
+    }
+
+    function handleModalImageFile(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      decodeQrFromImageFile(file);
+      event.target.value = '';
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();
+      document.getElementById('dropzone').classList.add('border-blue-500');
+    }
+
+    function handleDragLeave(e) {
+      e.preventDefault();
+      document.getElementById('dropzone').classList.remove('border-blue-500');
+    }
+
+    function handleFileDrop(e) {
+      e.preventDefault();
+      document.getElementById('dropzone').classList.remove('border-blue-500');
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) decodeQrFromImageFile(file);
+    }
+
+    function decodeQrFromImageFile(file) {
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const img = new Image();
+        img.onload = function() {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+          // Thử ở nhiều kích thước để đảm bảo ảnh chụp màn hình độ phân giải cao hoặc thấp đều đọc chuẩn
+          const scales = [1, 800 / Math.max(img.width, img.height, 1), 1400 / Math.max(img.width, img.height, 1)];
+          for (const scale of scales) {
+            const w = Math.max(100, Math.round(img.width * scale));
+            const h = Math.max(100, Math.round(img.height * scale));
+            canvas.width = w;
+            canvas.height = h;
+            ctx.drawImage(img, 0, 0, w, h);
+            const imageData = ctx.getImageData(0, 0, w, h);
+            if (typeof jsQR === 'function') {
+              const found = jsQR(imageData.data, w, h, { inversionAttempts: 'attemptBoth' });
+              if (found && found.data) {
+                handleDecodedQrString(found.data);
+                return;
+              }
+            }
+          }
+          showToast('Không tìm thấy mã QR hợp lệ trong bức ảnh này!', true);
+        };
+        img.src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Xử lý ngay khi quét trúng chuỗi QR (từ Camera hoặc Ảnh)
+    async function handleDecodedQrString(rawText) {
+      stopCameraScanner();
+      const parsed = parseOtpAuthInput(rawText);
+      if (!parsed) {
+        showToast('Mã QR không phải chuẩn 2FA TOTP (otpauth://)!', true);
+        return;
+      }
+
+      lastScannedRaw = rawText;
+      lastScannedSecret = parsed.secret;
+
+      // Tự động điền vào form
+      document.getElementById('issuer').value = parsed.name || '';
+      document.getElementById('provider-input').value = parsed.provider || 'Khác';
+      document.getElementById('secret').value = parsed.secret;
+      document.getElementById('opt-digits').value = String(parsed.digits || 6);
+      document.getElementById('opt-period').value = String(parsed.period || 30);
+      document.getElementById('opt-algo').value = parsed.algorithm || 'SHA-1';
+
+      // Tự động generate ngay lập tức mã OTP để hiển thị trong hộp Preview!
+      const liveOtp = await generateTOTP(parsed.secret, {
+        digits: parsed.digits,
+        period: parsed.period,
+        algorithm: parsed.algorithm
+      });
+
+      const previewBox = document.getElementById('scanned-preview-box');
+      previewBox.classList.remove('hidden');
+      document.getElementById('scanned-provider-badge').innerText = parsed.provider || 'Khác';
+      document.getElementById('scanned-account-name').innerText = `${parsed.provider || 'TOTP'} • ${parsed.name || 'Tài khoản mới'}`;
+      document.getElementById('scanned-live-otp').innerText = formatOtpDisplay(liveOtp);
+      document.getElementById('manual-live-code').innerText = `Mã hiện tại: ${formatOtpDisplay(liveOtp)}`;
+
+      renderQuickProviderChips();
+
+      // Nếu người dùng bật chế độ "Tự động lưu ngay khi quét"
+      if (autoSaveOnScan) {
+        await addAccount(parsed);
+      } else {
+        showToast(`Đã nhận diện ${parsed.provider}: ${formatOtpDisplay(liveOtp)}`);
+      }
+    }
+
+    function simulateSampleQRScan() {
+      const demos = [
+        'otpauth://totp/GitHub: octocat@github.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub',
+        'otpauth://totp/Cloudflare:ops@cloudflare.com?secret=GEZDGNBVGY3TQOJQ&issuer=Cloudflare',
+        'otpauth://totp/Google:workspace@gmail.com?secret=HXDMVJECJJWSRB3H&issuer=Google',
+        'otpauth://totp/AWS:devops-admin?secret=MFRGGZDFMZTWQ2LK&issuer=AWS'
+      ];
+      const randomUri = demos[Math.floor(Math.random() * demos.length)];
+      handleDecodedQrString(randomUri);
+    }
+
+    async function copyScannedPreviewCode() {
+      if (!lastScannedSecret) return;
+      const code = await generateTOTP(lastScannedSecret);
+      copyTextToClipboard(code, `Đã copy mã vừa quét: ${formatOtpDisplay(code)}`);
+    }
+
+    // =========================================================================
+    // 9. TỰ ĐỘNG NHẬN DIỆN KHI NHẬP THỦ CÔNG (MANUAL INPUT AUTO-DETECT)
+    // =========================================================================
+    function renderQuickProviderChips() {
+      const container = document.getElementById('quick-provider-chips');
+      if (!container) return;
+      const currentProv = document.getElementById('provider-input').value.trim();
+
+      container.innerHTML = QUICK_PROVIDERS.map(p => {
+        const active = currentProv.toLowerCase() === p.toLowerCase();
+        return `
+          <button type="button" onclick="selectQuickProvider('${p}')"
+                  class="text-[11px] px-2.5 py-1 rounded-lg border transition ${
+                    active
+                      ? 'bg-blue-600 text-white border-blue-500 font-semibold'
+                      : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
+                  }">
+            ${p}
+          </button>
+        `;
+      }).join('');
+    }
+
+    function selectQuickProvider(prov) {
+      document.getElementById('provider-input').value = prov;
+      renderQuickProviderChips();
+    }
+
+    function handleProviderManualInput(val) {
+      renderQuickProviderChips();
+    }
+
+    async function handleNameOrSecretInput() {
+      const nameVal = document.getElementById('issuer').value.trim();
+      let secretVal = document.getElementById('secret').value.trim();
+      const provInput = document.getElementById('provider-input');
+
+      // Nếu người dùng dán chuỗi otpauth:// vào ô Secret
+      if (secretVal.toLowerCase().startsWith('otpauth://')) {
+        const parsed = parseOtpAuthInput(secretVal);
+        if (parsed) {
+          document.getElementById('secret').value = parsed.secret;
+          secretVal = parsed.secret;
+          if (!nameVal && parsed.name) document.getElementById('issuer').value = parsed.name;
+          if (parsed.provider) provInput.value = parsed.provider;
+          document.getElementById('opt-digits').value = String(parsed.digits);
+          document.getElementById('opt-period').value = String(parsed.period);
+          document.getElementById('opt-algo').value = parsed.algorithm;
+          renderQuickProviderChips();
+        }
+      } else if (nameVal && !provInput.value.trim()) {
+        // Tự động gợi ý Provider khi gõ tên tài khoản (VD: gõ "github - minh" -> tự điền GitHub)
+        const guessed = detectProviderFromText('', nameVal);
+        if (guessed && guessed !== 'Khác') {
+          provInput.value = guessed;
+          renderQuickProviderChips();
+        }
+      }
+
+      // Live generate mã OTP ngay khi đang gõ Secret Key
+      const liveLabel = document.getElementById('manual-live-code');
+      const cleaned = secretVal.replace(/\s+/g, '').toUpperCase();
+      if (cleaned.length >= 8 && base32ToBytes(cleaned).length > 0) {
+        const code = await generateTOTP(cleaned, {
+          digits: Number(document.getElementById('opt-digits').value) || 6,
+          period: Number(document.getElementById('opt-period').value) || 30,
+          algorithm: document.getElementById('opt-algo').value || 'SHA-1'
+        });
+        liveLabel.innerText = `Mã Live: ${formatOtpDisplay(code)}`;
+      } else {
+        liveLabel.innerText = '';
+      }
+    }
+
+    function toggleAutoSavePref(checked) {
+      autoSaveOnScan = Boolean(checked);
+      safeSetStorage(LOCAL_STORAGE_PREFS_KEY, { isGridMode, isPrivacyMode, autoSaveOnScan });
+    }
+
+    // =========================================================================
+    // 10. SEARCH, SORT, PRIVACY MODE, LAYOUT & COPY CLIPBOARD
+    // =========================================================================
+    function handleSearchChange(val) {
+      searchQuery = val || '';
+      const clearBtn = document.getElementById('btn-clear-search');
+      if (clearBtn) {
+        clearBtn.classList.toggle('hidden', !searchQuery);
+      }
+      renderTokens();
+    }
+
+    function clearSearch() {
+      searchQuery = '';
+      const input = document.getElementById('search-input');
+      if (input) input.value = '';
+      document.getElementById('btn-clear-search').classList.add('hidden');
+      renderTokens();
+    }
+
+    function handleSortChange(val) {
+      sortMode = val || 'pinned_newest';
+      renderTokens();
+    }
+
+    function toggleLayoutMode() {
+      isGridMode = !isGridMode;
+      document.getElementById('icon-grid').classList.toggle('hidden', !isGridMode);
+      document.getElementById('icon-list').classList.toggle('hidden', isGridMode);
+      safeSetStorage(LOCAL_STORAGE_PREFS_KEY, { isGridMode, isPrivacyMode, autoSaveOnScan });
+      renderTokens();
+    }
+
+    function togglePrivacyMode() {
+      isPrivacyMode = !isPrivacyMode;
+      document.getElementById('icon-eye-open').classList.toggle('hidden', isPrivacyMode);
+      document.getElementById('icon-eye-closed').classList.toggle('hidden', !isPrivacyMode);
+      safeSetStorage(LOCAL_STORAGE_PREFS_KEY, { isGridMode, isPrivacyMode, autoSaveOnScan });
+      renderTokens();
+      showToast(isPrivacyMode ? '👁️ Đã bật chế độ ẩn mã chống nhìn trộm' : 'Đã tắt chế độ ẩn mã');
+    }
+
+    function copyTextToClipboard(text, message) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+      } else {
+        fallbackCopy(text);
+      }
+      showToast(message || 'Đã copy vào bộ nhớ tạm!');
+    }
+
+    function fallbackCopy(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta);
+    }
+
+    function copyCode(code, accountId, providerName, isNext = false) {
+      if (!code || code === 'INVALID' || code === 'ERROR') return;
+
+      // Tăng bộ đếm số lần sử dụng để phục vụ sắp xếp "Hay dùng nhất"
+      const target = accounts.find(a => Number(a.id) === Number(accountId));
+      if (target) {
+        target.copyCount = (target.copyCount || 0) + 1;
+        saveLocalMetaForAccount(accountId, { copyCount: target.copyCount });
+      }
+
+      const label = isNext ? `Đã copy MÃ KẾ TIẾP (${providerName}): ${formatOtpDisplay(code)}` : `Đã copy mã ${providerName}: ${formatOtpDisplay(code)}`;
+      copyTextToClipboard(code, label);
+    }
+
+    let toastTimer = null;
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      const toastText = document.getElementById('toast-text');
+      if (!toast || !toastText) return;
+
+      toastText.innerText = msg;
+      toast.className = `fixed bottom-16 sm:bottom-6 right-4 sm:right-6 z-50 ${
+        isError ? 'bg-red-950/95 border-red-500/50' : 'bg-slate-900/95 border-emerald-500/40'
+      } border text-white text-xs md:text-sm px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 transition-all duration-200 opacity-100 translate-y-0`;
+
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.classList.remove('opacity-100', 'translate-y-0');
+        toast.classList.add('opacity-0', 'translate-y-2');
+      }, 2200);
+    }
+
+    // =========================================================================
+    // 11. SAO LƯU & NHẬP HÀNG LOẠT (BACKUP / RESTORE)
+    // =========================================================================
+    function openToolsModal() {
+      document.getElementById('tools-modal').classList.remove('hidden');
+    }
+
+    function closeToolsModal() {
+      document.getElementById('tools-modal').classList.add('hidden');
+    }
+
+    function exportBackupJson() {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        version: '2.0',
+        accounts: accounts.map(a => ({
+          name: a.name,
+          provider: a.provider,
+          secret: a.secret,
+          pinned: a.pinned,
+          digits: a.digits,
+          period: a.period,
+          algorithm: a.algorithm
+        }))
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cloud-totp-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`Đã tải xuống file sao lưu (${accounts.length} tài khoản)`);
+    }
+
+    function copyAllOtpAuthUris() {
+      if (accounts.length === 0) {
+        showToast('Chưa có tài khoản nào để xuất!', true);
+        return;
+      }
+      const lines = accounts.map(a => {
+        const label = encodeURIComponent(`${a.provider}:${a.name}`);
+        const issuer = encodeURIComponent(a.provider);
+        return `otpauth://totp/${label}?secret=${a.secret}&issuer=${issuer}&digits=${a.digits || 6}&period=${a.period || 30}`;
+      });
+      copyTextToClipboard(lines.join('\n'), `Đã copy ${lines.length} đường dẫn otpauth://!`);
+    }
+
+    async function importBatchAccounts() {
+      const raw = document.getElementById('batch-import-text').value.trim();
+      if (!raw) {
+        showToast('Vui lòng dán danh sách otpauth:// hoặc JSON!', true);
+        return;
+      }
+
+      const toImport = [];
+
+      if (raw.startsWith('{') || raw.startsWith('[')) {
+        try {
+          const parsedJson = JSON.parse(raw);
+          const arr = Array.isArray(parsedJson) ? parsedJson : (parsedJson.accounts || []);
+          for (const item of arr) {
+            if (item && item.secret) {
+              toImport.push({
+                name: item.name || 'Tài khoản',
+                provider: item.provider || detectProviderFromText('', item.name || ''),
+                secret: item.secret.replace(/\s+/g, '').toUpperCase(),
+                pinned: Boolean(item.pinned),
+                digits: item.digits || 6,
+                period: item.period || 30,
+                algorithm: item.algorithm || 'SHA-1'
+              });
+            }
+          }
+        } catch (_) {
+          showToast('Nội dung JSON không hợp lệ!', true);
+          return;
+        }
+      } else {
+        const lines = raw.split(/\r?\n/);
+        for (const line of lines) {
+          const parsed = parseOtpAuthInput(line);
+          if (parsed && parsed.secret) {
+            toImport.push(parsed);
+          }
+        }
+      }
+
+      if (toImport.length === 0) {
+        showToast('Không tìm thấy mã hợp lệ nào để nhập!', true);
+        return;
+      }
+
+      for (const item of toImport) {
+        await addAccount(item);
+      }
+
+      document.getElementById('batch-import-text').value = '';
+      closeToolsModal();
+      showToast(`Đã nhập thành công ${toImport.length} tài khoản!`);
+    }
+
+    // =========================================================================
+    // 12. VÒNG LẶP ĐẾM NGƯỢC 30 GIÂY & PHÍM TẮT (CTRL+V PASTE ẢNH QR, / SEARCH)
+    // =========================================================================
+    let lastWindow = -1;
+    function tickCountdown() {
+      const epoch = Math.floor(Date.now() / 1000);
+      const remaining = 30 - (epoch % 30);
+      const currentWindow = Math.floor(epoch / 30);
+      const isExpiring = remaining <= 7;
+
+      const countdownEl = document.getElementById('countdown-text');
+      if (countdownEl) {
+        countdownEl.innerText = `${remaining}s`;
+        countdownEl.className = `font-mono text-xs font-bold w-6 text-right ${isExpiring ? 'text-amber-400' : 'text-blue-400'}`;
+      }
+
+      const progressBar = document.getElementById('progress-bar');
+      if (progressBar) {
+        progressBar.style.width = `${(remaining / 30) * 100}%`;
+        progressBar.className = isExpiring
+          ? 'bg-gradient-to-r from-amber-500 to-red-500 h-full transition-all duration-1000'
+          : 'bg-gradient-to-r from-blue-500 to-cyan-400 h-full transition-all duration-1000';
+      }
+
+      const ring = document.getElementById('header-ring');
+      if (ring) {
+        const circumference = 56.55;
+        ring.style.strokeDashoffset = String(circumference * (1 - remaining / 30));
+        ring.setAttribute('stroke', isExpiring ? '#f59e0b' : '#3b82f6');
+      }
+
+      const expBanner = document.getElementById('expiring-banner');
+      const expSeconds = document.getElementById('expiring-seconds');
+      if (expBanner && expSeconds) {
+        expBanner.classList.toggle('hidden', !isExpiring || accounts.length === 0);
+        expSeconds.innerText = `${remaining}s`;
+      }
+
+      // Render lại danh sách khi sang chu kỳ 30s mới hoặc khi bắt đầu vào ngưỡng 7s cuối
+      if (currentWindow !== lastWindow || remaining === 7) {
+        lastWindow = currentWindow;
+        renderTokens();
+        if (lastScannedSecret && !document.getElementById('scanned-preview-box').classList.contains('hidden')) {
+          generateTOTP(lastScannedSecret).then(code => {
+            document.getElementById('scanned-live-otp').innerText = formatOtpDisplay(code);
+          });
+        }
+      }
+    }
+
+    // Lắng nghe sự kiện Dán ảnh QR từ Clipboard (Ctrl+V) và phím tắt '/' để tìm kiếm
+    window.addEventListener('paste', (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const blob = items[i].getAsFile();
+          if (blob) {
+            openAddModal('scan');
+            switchAddTab('image');
+            decodeQrFromImageFile(blob);
+            e.preventDefault();
+            return;
+          }
+        }
+      }
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        document.getElementById('search-input').focus();
+      } else if (e.key === 'Escape') {
+        closeAddModal();
+        closeDetailModal();
+        closeToolsModal();
+        closeQuickProviderModal();
+      }
+    });
+
+    // Khởi chạy ứng dụng
+    (function initApp() {
+      const prefs = safeGetStorage(LOCAL_STORAGE_PREFS_KEY, {});
+      if (typeof prefs.isGridMode === 'boolean') isGridMode = prefs.isGridMode;
+      if (typeof prefs.isPrivacyMode === 'boolean') isPrivacyMode = prefs.isPrivacyMode;
+      if (typeof prefs.autoSaveOnScan === 'boolean') autoSaveOnScan = prefs.autoSaveOnScan;
+
+      document.getElementById('auto-save-qr').checked = autoSaveOnScan;
+      document.getElementById('icon-eye-open').classList.toggle('hidden', isPrivacyMode);
+      document.getElementById('icon-eye-closed').classList.toggle('hidden', !isPrivacyMode);
+
+      tickCountdown();
+      setInterval(tickCountdown, 1000);
+      fetchAccounts(false);
+    })();
+  </script>
+</body>
+</html>
